@@ -12,6 +12,7 @@ import subprocess
 import json
 from pathlib import Path
 
+from .blocklist import Blocklist
 from .manifest import (
     ClipRecord,
     CameraView,
@@ -148,8 +149,10 @@ def collect(
     if queries is None:
         queries = DEFAULT_QUERIES
 
-    manifest = Manifest(manifest_path)
+    manifest  = Manifest(manifest_path)
+    blocklist = Blocklist()
     all_records: list[ClipRecord] = []
+    blocked_count = 0
 
     for query in queries:
         print(f"Searching: '{query}'")
@@ -157,6 +160,10 @@ def collect(
         print(f"  Found {len(results)} results")
 
         for meta in results:
+            url = meta.get("webpage_url", meta.get("url", ""))
+            if blocklist.contains(url):
+                blocked_count += 1
+                continue
             record = metadata_to_record(
                 meta,
                 guess_setting=guess_setting,
@@ -166,7 +173,7 @@ def collect(
             all_records.append(record)
 
     written, skipped = manifest.append_many(all_records)
-    print(f"\nDone. {written} new clips registered, {skipped} duplicates skipped.")
+    print(f"\nDone. {written} new clips registered, {skipped} duplicates skipped, {blocked_count} blocklisted.")
     print(f"Manifest: {manifest_path}")
 
 

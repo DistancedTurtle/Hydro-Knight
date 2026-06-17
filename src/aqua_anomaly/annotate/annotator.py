@@ -27,8 +27,9 @@ from pathlib import Path
 
 import cv2
 
+from ..ingest.blocklist import Blocklist
+from ..ingest.download import done_marker, local_path, is_downloaded
 from ..ingest.manifest import CameraView, ClipRecord, Label, Manifest
-from ..ingest.download import local_path, is_downloaded
 
 
 # --- Overlay rendering -------------------------------------------------------
@@ -116,7 +117,7 @@ def _fmt(seconds: float) -> str:
 
 # --- Single clip review ------------------------------------------------------
 
-def _review_clip(record: ClipRecord, manifest: Manifest) -> str:
+def _review_clip(record: ClipRecord, manifest: Manifest, blocklist: Blocklist) -> str:
     """
     Open one clip for review. Returns the action taken:
     'next', 'deleted', or 'quit'.
@@ -216,8 +217,18 @@ def _review_clip(record: ClipRecord, manifest: Manifest) -> str:
             break
 
         elif key == ord('x'):
+            # 1. Add to blocklist so the collector never re-registers this URL
+            blocklist.add(record.source_url)
+            # 2. Remove from manifest
             manifest.delete(record.clip_id)
-            print(f"  Deleted {record.clip_id} from manifest.")
+            # 3. Delete local video file and done marker to free disk space
+            video = local_path(record)
+            marker = done_marker(record)
+            if video.exists():
+                video.unlink()
+            if marker.exists():
+                marker.unlink()
+            print(f"  Deleted {record.clip_id} — video removed, URL blocklisted.")
             action = "deleted"
             break
 
@@ -243,8 +254,9 @@ def annotate(
         If True (default), only show clips with label UNLABELED or REVIEW.
         Set to False to re-review all clips including already-labeled ones.
     """
-    manifest = Manifest(manifest_path)
-    records  = manifest.load()
+    manifest  = Manifest(manifest_path)
+    blocklist = Blocklist()
+    records   = manifest.load()
 
     # Filter to clips that are downloaded and need attention.
     queue = [
@@ -263,7 +275,7 @@ def annotate(
 
     for i, record in enumerate(queue, start=1):
         print(f"[{i}/{len(queue)}] {record.notes[:70] or record.clip_id}")
-        action = _review_clip(record, manifest)
+        action = _review_clip(record, manifest, blocklist)
         if action == "quit":
             print("Session ended.")
             break
