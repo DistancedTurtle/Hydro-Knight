@@ -2,7 +2,8 @@
 yt-dlp>=2024.1.1          # YouTube metadata search and video download
 
 # --- Annotation tool + pose extraction ---
-opencv-python>=4.9.0          # video frame display and playback in annotator
+opencv-python>=4.9.0          # video frame reading
+Pillow>=10.0.0                # converts OpenCV frames to tkinter-compatible images
 # mediapipe>=0.10.0           # pose extraction (needed for preprocess/)
 
 # --- Model training (needed for models/) ---

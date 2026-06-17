@@ -1,264 +1,385 @@
 """
-Interactive clip annotator.
+Interactive clip annotator — tkinter UI with OpenCV video backend.
 
-Opens each downloaded clip in a window and waits for keypresses to label,
-trim, or delete it. Writes changes back to the manifest immediately after
-each clip so progress is never lost if you quit mid-session.
+Layout
+------
+  Left panel  : video canvas + progress bar + playback controls
+  Right panel : metadata dropdowns (camera, setting, time, weather)
+                label buttons, trim controls, delete button
 
-Controls
---------
-  SPACE       pause / resume playback
-  LEFT / RIGHT  seek backward / forward 5 seconds
-  I           set in-point  (trim start) at current position
-  O           set out-point (trim end)   at current position
-  N           label as NORMAL    and advance to next clip
-  D           label as DISTRESS  and advance to next clip
-  S           label as SUBMERGED and advance to next clip
-  F           label as FACE_DOWN and advance to next clip
-  R           label as REVIEW    and advance to next clip (watch again later)
-  X           delete clip from manifest and advance
-  Q           quit the session
+Keyboard shortcuts
+------------------
+  SPACE         pause / resume
+  LEFT / RIGHT  seek -5s / +5s
+  I / O         set in-point / out-point at current position
+  N/D/S/F/R     label normal / distress / submerged / face_down / review
+  X             delete clip (blocklist + remove files)
+  Q             quit session
 """
 
 from __future__ import annotations
 
 import dataclasses
+import tkinter as tk
+from tkinter import ttk
 from pathlib import Path
 
 import cv2
+from PIL import Image, ImageTk
 
 from ..ingest.blocklist import Blocklist
 from ..ingest.download import done_marker, local_path, is_downloaded
-from ..ingest.manifest import CameraView, ClipRecord, Label, Manifest
+from ..ingest.manifest import (
+    CameraView, ClipRecord, Label, Manifest,
+    Setting, TimeOfDay, Weather,
+)
 
 
-# --- Overlay rendering -------------------------------------------------------
-
-def _draw_overlay(
-    frame,
-    current_sec: float,
-    total_sec: float,
-    in_point: float | None,
-    out_point: float | None,
-    paused: bool,
-    label: Label,
-) -> None:
-    """
-    Draw a heads-up display on top of the current frame.
-
-    We write directly onto the frame array that OpenCV is about to display.
-    This is purely visual — it doesn't affect the video file or any saved data.
-
-    The overlay shows:
-    - Current timestamp and total duration
-    - Active trim in/out points
-    - Current working label
-    - Paused indicator
-    - Key reference
-    """
-    h, w = frame.shape[:2]
-
-    # Semi-transparent black bar at the bottom for readability.
-    # We draw a filled rectangle and then text on top of it.
-    bar_h = 120
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, h - bar_h), (w, h), (0, 0, 0), -1)
-    # Alpha blending: mix the black bar with the original frame at 60% opacity
-    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-
-    def text(msg: str, row: int, col: int = 10, color=(255, 255, 255)):
-        cv2.putText(frame, msg, (col, h - bar_h + row),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
-
-    # Row 1: timestamp + pause indicator
-    pause_str = "  [PAUSED]" if paused else ""
-    text(f"{_fmt(current_sec)} / {_fmt(total_sec)}{pause_str}", 22)
-
-    # Row 2: trim points
-    in_str  = _fmt(in_point)  if in_point  is not None else "not set"
-    out_str = _fmt(out_point) if out_point is not None else "not set"
-    text(f"IN: {in_str}   OUT: {out_str}", 44)
-
-    # Row 3: current label
-    label_color = {
-        Label.NORMAL:    (100, 220, 100),
-        Label.DISTRESS:  (60,  60,  220),
-        Label.SUBMERGED: (220, 180, 60),
-        Label.FACE_DOWN: (60,  200, 220),
-        Label.REVIEW:    (180, 180, 180),
-        Label.UNLABELED: (180, 180, 180),
-    }.get(label, (255, 255, 255))
-    text(f"Label: {label.value.upper()}", 66, color=label_color)
-
-    # Row 4: key reference
-    text("SPC=pause  I/O=trim  N/D/S/F/R=label  X=delete  Q=quit", 92, color=(180, 180, 180))
-
-    # Progress bar along the bottom edge
-    if total_sec > 0:
-        bar_y = h - 4
-        bar_w = int(w * current_sec / total_sec)
-        cv2.rectangle(frame, (0, bar_y - 4), (w, bar_y), (60, 60, 60), -1)
-        cv2.rectangle(frame, (0, bar_y - 4), (bar_w, bar_y), (100, 200, 100), -1)
-
-        # Mark in/out points on the progress bar
-        if in_point is not None:
-            x = int(w * in_point / total_sec)
-            cv2.rectangle(frame, (x - 2, bar_y - 8), (x + 2, bar_y), (255, 255, 0), -1)
-        if out_point is not None:
-            x = int(w * out_point / total_sec)
-            cv2.rectangle(frame, (x - 2, bar_y - 8), (x + 2, bar_y), (255, 100, 0), -1)
+FRAME_DELAY_MS = 40   # ~25fps refresh rate for the UI
 
 
 def _fmt(seconds: float) -> str:
-    """Convert a float number of seconds to MM:SS display string."""
-    seconds = int(seconds)
-    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+    s = int(seconds)
+    return f"{s // 60:02d}:{s % 60:02d}"
 
 
-# --- Single clip review ------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Main annotator window for a single clip
+# ---------------------------------------------------------------------------
 
-def _review_clip(record: ClipRecord, manifest: Manifest, blocklist: Blocklist) -> str:
+class ClipAnnotator(tk.Toplevel):
     """
-    Open one clip for review. Returns the action taken:
-    'next', 'deleted', or 'quit'.
+    A tkinter window that plays one clip and collects annotations.
+
+    tkinter is Python's built-in GUI library. A Toplevel is a child window
+    separate from the hidden root window. We use Toplevel so we can create
+    and destroy one window per clip without restarting the whole application.
     """
-    path = local_path(record)
-    cap = cv2.VideoCapture(str(path))
 
-    if not cap.isOpened():
-        print(f"Could not open {path} — skipping.")
-        return "next"
+    def __init__(self, master, record: ClipRecord, manifest: Manifest, blocklist: Blocklist):
+        super().__init__(master)
+        self.record    = record
+        self.manifest  = manifest
+        self.blocklist = blocklist
+        self.action    = "quit"   # updated when the user makes a decision
 
-    fps       = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    total_sec = total_frames / fps
+        self.title(record.notes[:80] or record.clip_id)
+        self.configure(bg="#1e1e1e")
+        self.resizable(True, True)
 
-    # Initialise trim points from whatever is already in the manifest record.
-    # If the record has start_sec=0 and end_sec=-1 (the defaults from collect),
-    # we treat those as "no trim set yet."
-    in_point  = record.start_sec if record.start_sec > 0    else None
-    out_point = record.end_sec   if record.end_sec   > 0    else None
+        # --- Video capture ---
+        self.cap = cv2.VideoCapture(str(local_path(record)))
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 25.0
+        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.total_sec    = self.total_frames / self.fps
+        self.paused       = False
+        self.current_sec  = 0.0
 
-    current_label = record.label
-    paused = False
-    action = "next"
+        # Trim points — seeded from existing manifest values if already set
+        self.in_point  = record.start_sec if record.start_sec > 0   else None
+        self.out_point = record.end_sec   if record.end_sec   > 0   else None
 
-    window_title = f"Annotator — {record.notes[:60] or record.clip_id}"
-    cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_title, 1280, 780)
+        self._build_ui()
+        self._bind_keys()
 
-    while True:
-        if not paused:
-            ret, frame = cap.read()
-            if not ret:
-                # Reached the end of the video — pause and wait for a label key.
-                paused = True
-                cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames - 1)
-                ret, frame = cap.read()
-                if not ret:
-                    break
+        # Start the frame loop after a short delay so the window can render first
+        self.after(100, self._next_frame)
 
-        current_sec = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        # Block until this window is closed (wait_window makes the call synchronous)
+        self.wait_window(self)
 
-        _draw_overlay(frame, current_sec, total_sec, in_point, out_point, paused, current_label)
-        cv2.imshow(window_title, frame)
+    # --- UI construction ---
 
-        # waitKey(delay) waits `delay` milliseconds for a keypress.
-        # We calculate the delay from the video's frame rate so playback
-        # runs at approximately the correct speed.
-        # When paused we wait 50ms between polls so the UI stays responsive.
-        delay = max(1, int(1000 / fps)) if not paused else 50
-        key = cv2.waitKey(delay) & 0xFF
+    def _build_ui(self):
+        """Build the two-panel layout."""
 
-        if key == ord('q'):
-            action = "quit"
-            break
+        # ── Left panel: video ──────────────────────────────────────────────
+        left = tk.Frame(self, bg="#1e1e1e")
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        elif key == ord(' '):
-            paused = not paused
+        # Canvas where video frames are drawn.
+        # ImageTk.PhotoImage is the bridge between Pillow images and tkinter.
+        self.canvas = tk.Canvas(left, width=960, height=540, bg="black", highlightthickness=0)
+        self.canvas.pack()
 
-        elif key == 81 or key == 2:   # left arrow (Linux/Mac codes differ)
-            seek_sec = max(0, current_sec - 5)
-            cap.set(cv2.CAP_PROP_POS_MSEC, seek_sec * 1000)
+        # Progress bar — a thin canvas we draw a rectangle on
+        self.progress_canvas = tk.Canvas(left, height=12, bg="#333", highlightthickness=0)
+        self.progress_canvas.pack(fill=tk.X, pady=(4, 0))
+        self.progress_canvas.bind("<Button-1>", self._seek_click)
 
-        elif key == 83 or key == 3:   # right arrow
-            seek_sec = min(total_sec, current_sec + 5)
-            cap.set(cv2.CAP_PROP_POS_MSEC, seek_sec * 1000)
+        # Timestamp label
+        self.time_label = tk.Label(left, text="00:00 / 00:00", bg="#1e1e1e",
+                                   fg="#aaa", font=("Helvetica", 11))
+        self.time_label.pack(pady=(2, 6))
 
-        elif key == ord('i'):
-            in_point = current_sec
-            print(f"  In-point set: {_fmt(in_point)}")
+        # Playback control buttons
+        ctrl = tk.Frame(left, bg="#1e1e1e")
+        ctrl.pack()
+        btn = lambda text, cmd: tk.Button(ctrl, text=text, command=cmd,
+                                          bg="#333", fg="white", relief=tk.FLAT,
+                                          padx=10, pady=4)
+        btn("◀◀ -5s", lambda: self._seek_relative(-5)).pack(side=tk.LEFT, padx=4)
+        self.play_btn = tk.Button(ctrl, text="⏸ Pause", command=self._toggle_pause,
+                                  bg="#333", fg="white", relief=tk.FLAT, padx=10, pady=4)
+        self.play_btn.pack(side=tk.LEFT, padx=4)
+        btn("+5s ▶▶", lambda: self._seek_relative(5)).pack(side=tk.LEFT, padx=4)
 
-        elif key == ord('o'):
-            out_point = current_sec
-            print(f"  Out-point set: {_fmt(out_point)}")
+        # ── Right panel: metadata + actions ───────────────────────────────
+        right = tk.Frame(self, bg="#2a2a2a", width=280)
+        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+        right.pack_propagate(False)  # keep fixed width
 
-        elif key in (ord('n'), ord('d'), ord('s'), ord('f'), ord('r')):
-            current_label = {
-                ord('n'): Label.NORMAL,
-                ord('d'): Label.DISTRESS,
-                ord('s'): Label.SUBMERGED,
-                ord('f'): Label.FACE_DOWN,
-                ord('r'): Label.REVIEW,
-            }[key]
+        def section(text):
+            tk.Label(right, text=text, bg="#2a2a2a", fg="#888",
+                     font=("Helvetica", 9, "bold")).pack(anchor=tk.W, padx=12, pady=(14, 2))
 
-            # Build the updated record. dataclasses.replace() creates a new
-            # ClipRecord with all the same fields except the ones you specify —
-            # cleaner than constructing a whole new object manually.
-            updated = dataclasses.replace(
-                record,
-                label     = current_label,
-                start_sec = in_point  if in_point  is not None else record.start_sec,
-                end_sec   = out_point if out_point is not None else record.end_sec,
-            )
-            manifest.update(updated)
-            print(f"  Saved: label={current_label.value}  in={_fmt(in_point or 0)}  out={_fmt(out_point or total_sec)}")
-            action = "next"
-            break
+        def dropdown(parent, label_text, options, initial):
+            """
+            Build a labelled dropdown (ttk.Combobox) and return its StringVar.
+            StringVar is a tkinter object that holds a string value and can
+            notify other widgets when it changes — used to read the selection.
+            """
+            tk.Label(parent, text=label_text, bg="#2a2a2a", fg="#ccc",
+                     font=("Helvetica", 10)).pack(anchor=tk.W, padx=12, pady=(4, 0))
+            var = tk.StringVar(value=initial)
+            cb = ttk.Combobox(parent, textvariable=var, values=options,
+                              state="readonly", width=22)
+            cb.pack(padx=12, pady=(2, 0))
+            return var
 
-        elif key == ord('x'):
-            # 1. Add to blocklist so the collector never re-registers this URL
-            blocklist.add(record.source_url)
-            # 2. Remove from manifest
-            manifest.delete(record.clip_id)
-            # 3. Delete local video file and done marker to free disk space
-            video = local_path(record)
-            marker = done_marker(record)
-            if video.exists():
-                video.unlink()
-            if marker.exists():
-                marker.unlink()
-            print(f"  Deleted {record.clip_id} — video removed, URL blocklisted.")
-            action = "deleted"
-            break
+        # Metadata dropdowns
+        section("METADATA")
+        self.var_camera = dropdown(right, "Camera angle",
+                                   [e.value for e in CameraView],
+                                   self.record.camera_view.value)
+        self.var_setting = dropdown(right, "Setting",
+                                    [e.value for e in Setting],
+                                    self.record.setting.value)
+        self.var_time = dropdown(right, "Time of day",
+                                 [e.value for e in TimeOfDay],
+                                 self.record.time_of_day.value)
+        self.var_weather = dropdown(right, "Weather",
+                                    [e.value for e in Weather],
+                                    self.record.weather.value)
 
-    cap.release()
-    cv2.destroyWindow(window_title)
-    return action
+        # Trim controls
+        section("TRIM")
+        trim_frame = tk.Frame(right, bg="#2a2a2a")
+        trim_frame.pack(fill=tk.X, padx=12, pady=4)
+
+        self.in_label  = tk.Label(trim_frame, text=f"In:  {_fmt(self.in_point or 0)}",
+                                   bg="#2a2a2a", fg="#FFD700", font=("Helvetica", 10))
+        self.in_label.pack(anchor=tk.W)
+        self.out_label = tk.Label(trim_frame, text=f"Out: {_fmt(self.out_point or self.total_sec)}",
+                                   bg="#2a2a2a", fg="#FF8C00", font=("Helvetica", 10))
+        self.out_label.pack(anchor=tk.W)
+
+        tk.Button(trim_frame, text="Set In-point  [I]", command=self._set_in,
+                  bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X, pady=(6,2))
+        tk.Button(trim_frame, text="Set Out-point [O]", command=self._set_out,
+                  bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X)
+
+        # Label buttons
+        section("LABEL")
+        label_colors = {
+            Label.NORMAL:    ("#2d6a2d", "N — Normal"),
+            Label.DISTRESS:  ("#6a2d2d", "D — Distress"),
+            Label.SUBMERGED: ("#6a5a2d", "S — Submerged"),
+            Label.FACE_DOWN: ("#2d5a6a", "F — Face down"),
+            Label.REVIEW:    ("#4a4a4a", "R — Review later"),
+        }
+        for lbl, (color, text) in label_colors.items():
+            tk.Button(right, text=text,
+                      command=lambda l=lbl: self._save_and_next(l),
+                      bg=color, fg="white", relief=tk.FLAT,
+                      padx=8, pady=5, anchor=tk.W).pack(fill=tk.X, padx=12, pady=2)
+
+        # Delete + skip buttons
+        section("ACTIONS")
+        tk.Button(right, text="X — Delete + blocklist", command=self._delete,
+                  bg="#8b0000", fg="white", relief=tk.FLAT,
+                  padx=8, pady=5).pack(fill=tk.X, padx=12, pady=2)
+        tk.Button(right, text="Q — Quit session", command=self._quit,
+                  bg="#333", fg="white", relief=tk.FLAT,
+                  padx=8, pady=5).pack(fill=tk.X, padx=12, pady=2)
+
+    def _bind_keys(self):
+        self.bind("<space>",      lambda e: self._toggle_pause())
+        self.bind("<Left>",       lambda e: self._seek_relative(-5))
+        self.bind("<Right>",      lambda e: self._seek_relative(5))
+        self.bind("i",            lambda e: self._set_in())
+        self.bind("o",            lambda e: self._set_out())
+        self.bind("n",            lambda e: self._save_and_next(Label.NORMAL))
+        self.bind("d",            lambda e: self._save_and_next(Label.DISTRESS))
+        self.bind("s",            lambda e: self._save_and_next(Label.SUBMERGED))
+        self.bind("f",            lambda e: self._save_and_next(Label.FACE_DOWN))
+        self.bind("r",            lambda e: self._save_and_next(Label.REVIEW))
+        self.bind("x",            lambda e: self._delete())
+        self.bind("q",            lambda e: self._quit())
+        self.focus_set()
+
+    # --- Frame loop ---
+
+    def _next_frame(self):
+        """
+        Read the next frame from OpenCV and display it on the canvas.
+
+        self.after(delay, callback) is tkinter's way of scheduling a function
+        to run after `delay` milliseconds without blocking the UI. By scheduling
+        itself at the end of each call, it creates a continuous loop that stops
+        when the window is destroyed.
+        """
+        if self.paused:
+            self.after(FRAME_DELAY_MS, self._next_frame)
+            return
+
+        ret, frame = self.cap.read()
+        if not ret:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.total_frames - 1)
+            self.paused = True
+            self.play_btn.config(text="▶ Play")
+            self.after(FRAME_DELAY_MS, self._next_frame)
+            return
+
+        self.current_sec = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        self._update_display(frame)
+        self.after(FRAME_DELAY_MS, self._next_frame)
+
+    def _update_display(self, frame):
+        """Convert an OpenCV frame (BGR numpy array) to a tkinter image and draw it."""
+
+        # OpenCV stores colors as BGR (Blue, Green, Red). Pillow expects RGB.
+        # cvtColor converts between color formats.
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Resize to fit the canvas while preserving aspect ratio
+        h, w = rgb.shape[:2]
+        canvas_w, canvas_h = 960, 540
+        scale = min(canvas_w / w, canvas_h / h)
+        new_w, new_h = int(w * scale), int(h * scale)
+
+        img = Image.fromarray(rgb).resize((new_w, new_h), Image.BILINEAR)
+
+        # We must keep a reference to the PhotoImage or Python's garbage
+        # collector will delete it before tkinter can display it.
+        self._photo = ImageTk.PhotoImage(img)
+        self.canvas.create_image(canvas_w // 2, canvas_h // 2,
+                                  anchor=tk.CENTER, image=self._photo)
+
+        # Update timestamp and progress bar
+        self.time_label.config(text=f"{_fmt(self.current_sec)} / {_fmt(self.total_sec)}")
+        self._draw_progress()
+
+    def _draw_progress(self):
+        """Redraw the progress bar with current position and trim markers."""
+        w = self.progress_canvas.winfo_width()
+        h = 12
+        self.progress_canvas.delete("all")
+
+        if self.total_sec <= 0 or w <= 1:
+            return
+
+        # Background
+        self.progress_canvas.create_rectangle(0, 0, w, h, fill="#333", outline="")
+
+        # Played portion
+        played_w = int(w * self.current_sec / self.total_sec)
+        self.progress_canvas.create_rectangle(0, 0, played_w, h, fill="#4a9a4a", outline="")
+
+        # In/out markers
+        if self.in_point is not None:
+            x = int(w * self.in_point / self.total_sec)
+            self.progress_canvas.create_rectangle(x - 2, 0, x + 2, h, fill="#FFD700", outline="")
+        if self.out_point is not None:
+            x = int(w * self.out_point / self.total_sec)
+            self.progress_canvas.create_rectangle(x - 2, 0, x + 2, h, fill="#FF8C00", outline="")
+
+    # --- Controls ---
+
+    def _toggle_pause(self):
+        self.paused = not self.paused
+        self.play_btn.config(text="▶ Play" if self.paused else "⏸ Pause")
+
+    def _seek_relative(self, delta_sec: float):
+        target = max(0.0, min(self.total_sec, self.current_sec + delta_sec))
+        self.cap.set(cv2.CAP_PROP_POS_MSEC, target * 1000)
+
+    def _seek_click(self, event):
+        """Seek to position clicked on the progress bar."""
+        w = self.progress_canvas.winfo_width()
+        if w <= 0:
+            return
+        ratio = event.x / w
+        self.cap.set(cv2.CAP_PROP_POS_MSEC, ratio * self.total_sec * 1000)
+
+    def _set_in(self):
+        self.in_point = self.current_sec
+        self.in_label.config(text=f"In:  {_fmt(self.in_point)}")
+
+    def _set_out(self):
+        self.out_point = self.current_sec
+        self.out_label.config(text=f"Out: {_fmt(self.out_point)}")
+
+    def _current_metadata(self) -> dict:
+        """Read the current dropdown values and return them as a dict."""
+        return {
+            "camera_view": CameraView(self.var_camera.get()),
+            "setting":     Setting(self.var_setting.get()),
+            "time_of_day": TimeOfDay(self.var_time.get()),
+            "weather":     Weather(self.var_weather.get()),
+        }
+
+    def _save_and_next(self, label: Label):
+        meta = self._current_metadata()
+        updated = dataclasses.replace(
+            self.record,
+            label       = label,
+            start_sec   = self.in_point  if self.in_point  is not None else self.record.start_sec,
+            end_sec     = self.out_point if self.out_point is not None else self.record.end_sec,
+            camera_view = meta["camera_view"],
+            setting     = meta["setting"],
+            time_of_day = meta["time_of_day"],
+            weather     = meta["weather"],
+        )
+        self.manifest.update(updated)
+        print(f"  Saved: {label.value} | {meta['camera_view'].value} | {meta['setting'].value} | {meta['time_of_day'].value} | {meta['weather'].value}")
+        self.action = "next"
+        self._close()
+
+    def _delete(self):
+        self.blocklist.add(self.record.source_url)
+        self.manifest.delete(self.record.clip_id)
+        video  = local_path(self.record)
+        marker = done_marker(self.record)
+        if video.exists():
+            video.unlink()
+        if marker.exists():
+            marker.unlink()
+        print(f"  Deleted {self.record.clip_id} — video removed, URL blocklisted.")
+        self.action = "deleted"
+        self._close()
+
+    def _quit(self):
+        self.action = "quit"
+        self._close()
+
+    def _close(self):
+        self.cap.release()
+        self.destroy()
 
 
-# --- Session loop ------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Session loop
+# ---------------------------------------------------------------------------
 
 def annotate(
     manifest_path: Path,
     only_unlabeled: bool = True,
 ) -> None:
-    """
-    Run an annotation session over all downloaded clips.
-
-    Parameters
-    ----------
-    manifest_path :
-        Path to the JSONL manifest.
-    only_unlabeled :
-        If True (default), only show clips with label UNLABELED or REVIEW.
-        Set to False to re-review all clips including already-labeled ones.
-    """
     manifest  = Manifest(manifest_path)
     blocklist = Blocklist()
     records   = manifest.load()
 
-    # Filter to clips that are downloaded and need attention.
     queue = [
         r for r in records
         if is_downloaded(r) and (
@@ -271,16 +392,21 @@ def annotate(
         return
 
     print(f"{len(queue)} clips in queue.")
-    print("Controls: SPACE=pause  LEFT/RIGHT=seek  I/O=trim  N/D/S/F/R=label  X=delete  Q=quit\n")
+
+    # Hidden root window — tkinter requires one root to exist even if we only
+    # ever show Toplevel child windows. We withdraw it so it never appears.
+    root = tk.Tk()
+    root.withdraw()
 
     for i, record in enumerate(queue, start=1):
-        print(f"[{i}/{len(queue)}] {record.notes[:70] or record.clip_id}")
-        action = _review_clip(record, manifest, blocklist)
-        if action == "quit":
+        print(f"\n[{i}/{len(queue)}] {record.notes[:70] or record.clip_id}")
+        win = ClipAnnotator(root, record, manifest, blocklist)
+        if win.action == "quit":
             print("Session ended.")
             break
 
-    print("Annotation session complete.")
+    root.destroy()
+    print("\nAnnotation session complete.")
 
 
 if __name__ == "__main__":
