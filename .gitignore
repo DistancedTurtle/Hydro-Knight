@@ -1,3 +1,16 @@
+# --- Project-specific ---
+# Raw video files are never committed (size, copyright, privacy)
+raw_local/
+*.mp4
+*.mkv
+*.webm
+*.avi
+*.mov
+
+# Manifests and annotations ARE committed — they are the reproducibility record
+# (no ignore rules for data/manifests/ or data/annotations/)
+
+# --- Python ---
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
