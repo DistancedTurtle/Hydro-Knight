@@ -1,9 +1,9 @@
 # --- Data collection ---
 yt-dlp>=2024.1.1          # YouTube metadata search and video download
 
-# --- Pose extraction (needed for preprocess/) ---
-# mediapipe>=0.10.0
-# opencv-python>=4.9.0
+# --- Annotation tool + pose extraction ---
+opencv-python>=4.9.0          # video frame display and playback in annotator
+# mediapipe>=0.10.0           # pose extraction (needed for preprocess/)
 
 # --- Model training (needed for models/) ---
 # torch>=2.2.0

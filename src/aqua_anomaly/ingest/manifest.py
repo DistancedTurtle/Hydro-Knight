@@ -174,6 +174,81 @@ class Manifest:
 
         return True
 
+    def update(self, updated: ClipRecord) -> bool:
+        """
+        Replace an existing record in the manifest with an updated version.
+
+        This rewrites the entire file with the updated record swapped in.
+        Rewriting the whole file is necessary because JSONL has no concept of
+        "edit line N" — you can only append or rewrite. For a manifest of
+        thousands of clips this is still fast (it's just text), and it's the
+        only safe way to guarantee the file stays valid after an edit.
+
+        Returns True if the record was found and updated, False if the
+        clip_id didn't exist in the manifest.
+        """
+        records = self.load()
+        found = False
+
+        for i, record in enumerate(records):
+            if record.clip_id == updated.clip_id:
+                records[i] = updated
+                found = True
+                break
+
+        if not found:
+            return False
+
+        # Write all records back to the file from scratch.
+        # We write to a temporary file first, then replace the original.
+        # This protects against data loss if the process is interrupted
+        # mid-write — without this, a crash halfway through would leave
+        # a half-written, corrupted manifest.
+        tmp = self.path.with_suffix(".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            for record in records:
+                row = asdict(record)
+                row["camera_view"] = record.camera_view.value
+                row["setting"]     = record.setting.value
+                row["time_of_day"] = record.time_of_day.value
+                row["weather"]     = record.weather.value
+                row["label"]       = record.label.value
+                f.write(json.dumps(row) + "\n")
+
+        tmp.replace(self.path)
+        return True
+
+    def delete(self, clip_id: str) -> bool:
+        """
+        Remove a record from the manifest by clip_id.
+
+        Like update(), this rewrites the entire file with the matching
+        record omitted. The git history retains the record if it was
+        ever committed, so deletion is always recoverable.
+
+        Returns True if the record was found and removed, False if the
+        clip_id didn't exist.
+        """
+        records = self.load()
+        filtered = [r for r in records if r.clip_id != clip_id]
+
+        if len(filtered) == len(records):
+            return False
+
+        tmp = self.path.with_suffix(".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            for record in filtered:
+                row = asdict(record)
+                row["camera_view"] = record.camera_view.value
+                row["setting"]     = record.setting.value
+                row["time_of_day"] = record.time_of_day.value
+                row["weather"]     = record.weather.value
+                row["label"]       = record.label.value
+                f.write(json.dumps(row) + "\n")
+
+        tmp.replace(self.path)
+        return True
+
     def append_many(self, records: list[ClipRecord]) -> tuple[int, int]:
         """
         Write multiple records, skipping duplicates.
