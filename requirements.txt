@@ -1,0 +1,15 @@
+# --- Data collection ---
+yt-dlp>=2024.1.1          # YouTube metadata search and video download
+
+# --- Pose extraction (needed for preprocess/) ---
+# mediapipe>=0.10.0
+# opencv-python>=4.9.0
+
+# --- Model training (needed for models/) ---
+# torch>=2.2.0
+# numpy>=1.26.0
+# pandas>=2.2.0
+# pyarrow>=15.0.0          # Parquet file format for keypoint storage
+
+# --- Dev / testing ---
+# pytest>=8.0.0

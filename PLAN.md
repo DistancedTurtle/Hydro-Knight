@@ -1,0 +1,183 @@
+# Aqua-Anomaly: Project Plan
+
+## What this is
+
+A pose-based anomaly detection system for swimming pool safety. It watches pool footage, tracks individual swimmers, and flags potential drowning events. Purpose: genuine learning project and recruiting portfolio piece. Not a commercial product, but it should actually work.
+
+---
+
+## Problem framing
+
+### Binary anomaly detection, not classification
+
+Started as multi-class (first aid, regular save, spinal save, etc.) — scrapped early. Mechanism of injury isn't reliably visible from camera footage. Narrowed to: **is someone in distress or not.**
+
+Anomaly detection is the right framing because:
+- Real drowning events are extremely rare → severe class imbalance in any classification setup
+- Anomaly detection is purpose-built for sparse positives: train on abundant "normal" data, flag deviations
+- Detection threshold should bias **toward recall over precision** — missed drownings are more dangerous than false alarms, but alarm fatigue is a real concern to monitor
+
+### Three target signals
+
+| Signal | Mechanism | Detection approach |
+|---|---|---|
+| Not surfacing | Tracked swimmer hasn't reappeared past a time threshold | Tracking + timer logic |
+| Face down too long | Passive, motionless prone position beyond normal duration | Pose angle over time |
+| Aggressive flailing | Erratic, high-magnitude limb motion inconsistent with normal strokes | Motion variance / reconstruction error |
+
+**Silent drowning is the critical case.** The most common real pattern is no flailing, no shouting — a person goes limp and sinks. The model needs temporal memory, not single-frame classification. Keypoints vanishing and not returning is the primary signal.
+
+### False positive baseline
+
+All three signals fire on healthy swimmers (breath-holding, dead man's float, excited kids). The correct baseline is **human guard performance**, not a perfect detector. A former lifeguard can't reliably distinguish these in real time either. An ML model processing continuous footage may catch patterns guards miss.
+
+---
+
+## Architecture
+
+### Input representation: pose-primary
+
+Run MediaPipe pose estimation as a preprocessing step, converting raw video into time-series of keypoint coordinates per tracked person. This converts "video anomaly detection" into "multivariate time series anomaly detection."
+
+**Why this works:**
+- When keypoint confidence collapses (person submerges), that collapse is itself a feature — the non-surfacing signal expressed natively in the representation
+- Pose keypoints are naturally invariant to lighting, camera angle, and weather
+
+**Known limitation to validate early:** MediaPipe was trained on above-water, upright humans. It degrades on prone swimmers, underwater partial occlusion, and crowded pools. The confidence-collapse-as-feature argument depends on MediaPipe failing *predictably* when someone submerges. **Validate this empirically before Rung 3.**
+
+### Feature engineering (to decide before training)
+
+Raw keypoint coordinates are not the best representation. Choices matter:
+- **Raw coordinates** — simplest, but view-dependent
+- **Joint angles** — more view-invariant, better for pose classification
+- **Velocities / accelerations** — captures flailing better than position
+- **Normalized-to-torso coordinates** — removes camera angle dependence
+
+Decision: use joint angles + per-joint velocity as primary features. Revisit if autoencoder reconstruction quality is poor.
+
+---
+
+## Build progression
+
+### Rung 1 — Pose extraction preprocessing *(current next step)*
+Turn video into keypoint time series. MediaPipe over downloaded clips → per-frame keypoint Parquet files, one file per clip, one row per frame per detected person.
+
+### Rung 2 — Simple autoencoder on keypoint sequences
+Train to reconstruct normal swimming. High reconstruction error = anomaly. Get this working end-to-end before anything fancier. Validates the representation before adding temporal complexity.
+
+### Rung 2.5 — Lightweight tracking *(run in parallel with Rung 2, not deferred)*
+ByteTrack or DeepSORT for bounding-box-level identity continuity. Originally planned as Rung 4, but moved up because:
+- "Not resurfaced in N seconds" is arguably the most important signal
+- It requires identity continuity **across a submersion gap**
+- Tracking in pool scenes is harder than pedestrian scenes (bodies submerging, overlapping wakes, oblique cameras)
+- Better to discover tracking failures early than after the autoencoder is trained
+
+### Rung 3 — Temporal structure
+LSTM autoencoder or temporal CNN so the model reasons over windows of motion, not single frames. This is where flailing and non-surfacing become learnable patterns rather than one-frame snapshots.
+
+### Rung 4 — Per-swimmer state machine
+Attaches explicit states to tracked identities:
+```
+at_surface → submerged → resurfaced   (normal)
+at_surface → submerged → [timer] → ALERT   (not-surfacing anomaly)
+```
+ML scores anomalies; logic handles explicit temporal rules. Combines the autoencoder scores with the state machine to produce alerts.
+
+---
+
+## Data strategy
+
+### Manifest-driven dataset (no video in repo)
+
+The repo commits manifests (JSONL files of source URLs + metadata + annotations) and code, never raw video. Anyone reproducing the work re-downloads from the manifest. Mirrors how Kinetics and AVA distribute data.
+
+**Why:**
+- Copyright: public visibility ≠ redistribution rights
+- Consent/privacy: pool footage shows identifiable people, often minors
+- Reproducibility: manifests are tiny and diff-friendly; video dumps aren't
+
+### Collection
+
+- `yt-dlp` in metadata-only mode to search for varied pool footage
+- Default search terms bias toward outdoor-daytime normal pool activity
+- Download to a gitignored local directory for processing only
+- Condition metadata (camera view, setting, time of day, weather) is auto-filled as search-intent guess and must be verified in a manual review pass
+
+### Positive (anomaly) examples — in priority order
+
+1. Consented research datasets (e.g. Figshare underwater drowning dataset)
+2. Self-recorded simulations with consenting participants
+3. Proxy footage (breath-hold freediving, lifeguard training drills)
+
+### Annotation schema
+
+Per-clip fields: `clip_id`, `source_url`, `platform`, `start_sec`, `end_sec`, `camera_view`, `setting`, `time_of_day`, `weather`, `label`, `notes`, provenance fields.
+
+Labels: `normal`, `review`, `distress`, `submerged`, `face_down`, `unlabeled`
+
+**Outcome-based retrospective labeling:** if they surface → negative; if guards intervene or someone is pulled out → positive. The footage tells you the answer after the fact. No ambiguous mid-event judgment calls.
+
+---
+
+## Labeling tooling — build this before the annotation pass
+
+**This is a likely blocker.** Fast annotation of clip-level labels on video is genuinely painful without dedicated tooling. Doing it manually with a video player and a spreadsheet will be far slower than expected and invite label noise.
+
+### Minimum viable annotator
+
+A script that:
+1. Reads the manifest and finds unlabeled or `review` clips
+2. Steps through clips, showing sampled frames (e.g. 1fps) in sequence
+3. Waits for a keypress: `n` (normal), `d` (distress), `s` (submerged), `f` (face_down), `r` (review/skip)
+4. Writes the label back to the manifest JSONL
+
+This is a half-day build that pays for itself within the first annotation session. **Build before starting the annotation pass, not after.**
+
+---
+
+## Scope
+
+**First working version:** outdoor daytime pools only. Broad generalization (weather, night, indoor) is the aspiration the dataset collection is oriented toward, but the first validated model is scoped to this narrower slice.
+
+---
+
+## Repository structure
+
+```
+src/aqua_anomaly/
+├── ingest/
+│   ├── manifest.py     — ClipRecord dataclass, controlled-vocabulary enums,
+│   │                     deterministic clip_id hashing, Manifest JSONL reader/writer
+│   │                     with append-safe de-duplication
+│   ├── collect.py      — yt-dlp metadata-only search → manifest registration
+│   └── download.py     — local-only video download (gitignored output)
+├── annotate/           — labeling tooling (build before annotation pass)
+├── preprocess/         — video standardization, pose extraction pipeline
+├── features/           — keypoint → time series feature engineering
+├── models/             — autoencoder, LSTM, anomaly scorers
+├── detect/             — inference pipeline, state machine, alerting
+└── utils/              — shared helpers
+
+data/
+├── manifests/          — committed JSONL manifests
+└── annotations/        — committed annotation files
+
+raw_local/              — gitignored, local video only
+docs/
+└── DATA_SOURCING.md    — manifest approach and ethics
+```
+
+---
+
+## Collaboration rules (Claude must follow these)
+
+- **One file at a time.** Only modify a single file per response unless explicitly told otherwise. If a change naturally spans multiple files, stop and ask which to tackle first.
+- **Explain every change in plain English.** After writing or editing any line of code, describe what it does as if the reader has never seen that line before — what problem it solves, what the individual pieces mean, and why it was written that way. No assumed context.
+
+---
+
+## Open questions
+
+- What submersion duration threshold triggers the not-surfacing alert? Needs empirical tuning against normal breath-hold behavior.
+- How to handle crowded pools where multiple swimmers overlap? Tracking identity across occlusion is unsolved.
+- What's the minimum normal-swim training data volume for a useful autoencoder? Unknown until Rung 2 is built.
