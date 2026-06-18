@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Ensure Homebrew binaries (ffmpeg) are visible to subprocesses even when
 # the shell PATH isn't inherited by the venv.
-_ENV = {**os.environ, "PATH": f"/opt/homebrew/bin:{os.environ.get('PATH', '')}"}
+_ENV = {**os.environ, "PATH": f"/opt/homebrew/bin:/usr/local/bin:{os.environ.get('PATH', '')}"}
 
 from .manifest import ClipRecord, Manifest
 
@@ -65,7 +65,7 @@ def download_clip(record: ClipRecord, cookies_file: Path | None = None, cookies_
         "yt-dlp",
         record.source_url,
         "--output", str(out_path),
-        "--format", "bestvideo[ext=mp4]/bestvideo", # best quality video-only, any format
+        "--format", "bestvideo[ext=mp4][height<=1080]/bestvideo[height<=1080]/136/135/134", # best mp4 video-only up to 1080p
         "--quiet",
         "--no-playlist",
     ]
@@ -132,7 +132,37 @@ def download(
     print(f"\nDone. {succeeded} downloaded, {failed} failed.")
 
 
+def cleanup_orphans(manifest_path: Path) -> None:
+    """
+    Delete any files in raw_local/ whose clip_id has no matching record
+    in the manifest.
+
+    This fixes the case where the manifest was regenerated (new clip IDs)
+    while old downloaded files were still sitting on disk. Without cleanup,
+    those orphaned files waste disk space and can never be opened by the
+    annotator since nothing in the manifest points to them.
+    """
+    if not RAW_LOCAL.exists():
+        print("raw_local/ does not exist — nothing to clean.")
+        return
+
+    manifest = Manifest(manifest_path)
+    known_ids = {r.clip_id for r in manifest.load()}
+
+    removed = 0
+    for f in RAW_LOCAL.iterdir():
+        # Each file is named <clip_id>.mp4 or <clip_id>.done
+        # Strip the suffix to get the clip_id
+        clip_id = f.stem
+        if clip_id not in known_ids:
+            f.unlink()
+            removed += 1
+
+    print(f"Cleanup done. {removed} orphaned files removed from raw_local/.")
+
+
 if __name__ == "__main__":
+    cleanup_orphans(Path("data/manifests/pool_footage.jsonl"))
     download(
         manifest_path=Path("data/manifests/pool_footage.jsonl"),
         limit=5,

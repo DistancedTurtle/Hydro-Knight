@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import subprocess
 import json
+import time
 from pathlib import Path
+
+# Seconds to wait between search queries to avoid YouTube rate limiting.
+# 18 queries in rapid succession reliably triggers 400 errors.
+QUERY_SLEEP_SEC = 3
 
 from .blocklist import Blocklist
 from .manifest import (
@@ -25,61 +30,105 @@ from .manifest import (
 )
 
 
-# --- Default search queries --------------------------------------------------
-# Each entry is a search string that biases toward a specific type of normal
-# pool footage. Keeping these as a list makes it easy to add new search terms
-# without touching the rest of the code.
+# --- Search configuration ----------------------------------------------------
 
+# Duration filter: only accept videos between these lengths.
+# Too short = not enough swimming activity to be useful.
+# Too long = primitive tech builds, construction timelapses, livestreams.
+MIN_DURATION_SEC = 3 * 60    #  3 minutes
+MAX_DURATION_SEC = 45 * 60   # 45 minutes
+
+# Queries are grouped by intent so condition metadata can be guessed
+# per-group when collect() is called in batches. Each string is written
+# to avoid YouTube's popularity bias — specific, descriptive phrases
+# surface recent or niche uploads rather than viral hits.
 DEFAULT_QUERIES = [
-    "outdoor swimming pool long footage",
-    "swimming pool overhead camera",
-    "public pool surveillance footage",
-    "competitive swimming pool side view",
-    "outdoor pool sunny day swimmers",
+    # Overhead / wide angle — most useful camera angle for pose detection
+    "swimming pool overhead view people swimming",
+    "pool deck camera angle swimmers laps",
+    "aquatic center wide angle swim practice",
+
+    # Outdoor recreational — the primary training distribution
+    "outdoor public pool swimmers summer",
+    "community pool open swim session",
+    "backyard pool party swimming people",
+    "hotel pool guests swimming vacation",
+
+    # Indoor recreational
+    "indoor lap pool swimmers training session",
+    "ymca pool open swim",
+    "leisure centre pool swimming",
+
+    # Competitive — different body positions, useful for stroke variety
+    "swim meet 50m pool side view",
+    "masters swimming competition pool",
+    "age group swim meet outdoor pool",
+
+    # Lifeguard perspective — closest to surveillance camera angle
+    "lifeguard stand view pool swimmers",
+    "pool safety swim lesson children",
+
+    # Varied conditions
+    "outdoor pool cloudy day swimmers",
+    "evening outdoor pool swimmers dusk",
+    "crowded public pool summer swimmers",
 ]
 
 
 # --- yt-dlp metadata fetch ---------------------------------------------------
 
-def fetch_metadata(query: str, max_results: int = 10) -> list[dict]:
+def fetch_metadata(
+    query: str,
+    max_results: int = 10,
+    min_duration: int = MIN_DURATION_SEC,
+    max_duration: int = MAX_DURATION_SEC,
+) -> list[dict]:
     """
     Ask yt-dlp to search YouTube and return video metadata.
 
-    yt-dlp is run as a subprocess — a separate program launched from Python.
-    We pass it flags that tell it: search YouTube, return JSON, don't download
-    anything, and stop after max_results videos.
+    We fetch more results than requested (3x) to account for videos that
+    will be filtered out by duration — then trim down to max_results after
+    filtering. This avoids short queries returning almost nothing after
+    duration filtering removes the bulk of results.
 
     Returns a list of raw metadata dicts, one per video found.
     """
+    fetch_n = max_results * 3  # over-fetch to absorb duration filter losses
+
     cmd = [
         "yt-dlp",
-        f"ytsearch{max_results}:{query}",  # "ytsearch10:..." means search YouTube for up to 10 results
-        "--dump-json",                      # print metadata as JSON instead of downloading
-        "--no-playlist",                    # treat each result as an individual video, not a playlist
-        "--quiet",                          # suppress progress bars and status lines
+        f"ytsearch{fetch_n}:{query}",
+        "--dump-json",
+        "--no-playlist",
+        "--quiet",
+        "--no-warnings",  # suppress nsig/throttling noise — errors still surface via returncode
     ]
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,   # capture both stdout (the JSON) and stderr (errors)
-        text=True,             # return output as a string, not raw bytes
-    )
+    result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
         print(f"yt-dlp error for query '{query}':\n{result.stderr}")
         return []
 
-    # yt-dlp with --dump-json prints one JSON object per line (not a list).
-    # We split on newlines and parse each line individually.
-    records = []
+    all_results = []
     for line in result.stdout.strip().splitlines():
         if line:
             try:
-                records.append(json.loads(line))
+                all_results.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
 
-    return records
+    # Filter by duration. Videos outside the window are almost always
+    # construction timelapses, music videos, or livestream archives.
+    filtered = []
+    for meta in all_results:
+        duration = float(meta.get("duration") or 0.0)
+        if min_duration <= duration <= max_duration:
+            filtered.append(meta)
+        if len(filtered) >= max_results:
+            break
+
+    return filtered
 
 
 # --- Metadata → ClipRecord ---------------------------------------------------
@@ -154,7 +203,9 @@ def collect(
     all_records: list[ClipRecord] = []
     blocked_count = 0
 
-    for query in queries:
+    for i, query in enumerate(queries):
+        if i > 0:
+            time.sleep(QUERY_SLEEP_SEC)
         print(f"Searching: '{query}'")
         results = fetch_metadata(query, max_results=max_results_per_query)
         print(f"  Found {len(results)} results")
