@@ -1,4 +1,7 @@
 # --- Project-specific ---
+# Cookie files must never be committed
+*cookies*.txt
+
 # Raw video files are never committed (size, copyright, privacy)
 raw_local/
 *.mp4
