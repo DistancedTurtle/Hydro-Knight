@@ -111,9 +111,12 @@ class ClipAnnotator(tk.Toplevel):
         self.canvas.pack()
 
         # Progress bar — a thin canvas we draw a rectangle on
-        self.progress_canvas = tk.Canvas(left, height=18, bg="#333", highlightthickness=0)
+        self.progress_canvas = tk.Canvas(left, height=22, bg="#333",
+                                         highlightthickness=0, cursor="hand2")
         self.progress_canvas.pack(fill=tk.X, pady=(4, 0))
+        # Click anywhere on the bar to seek; drag (B1-Motion) to scrub.
         self.progress_canvas.bind("<Button-1>", self._seek_click)
+        self.progress_canvas.bind("<B1-Motion>", self._seek_click)
 
         # Timestamp label
         self.time_label = tk.Label(left, text="00:00 / 00:00", bg="#1e1e1e",
