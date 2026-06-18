@@ -109,7 +109,7 @@ class ClipAnnotator(tk.Toplevel):
         self.canvas.pack()
 
         # Progress bar — a thin canvas we draw a rectangle on
-        self.progress_canvas = tk.Canvas(left, height=12, bg="#333", highlightthickness=0)
+        self.progress_canvas = tk.Canvas(left, height=18, bg="#333", highlightthickness=0)
         self.progress_canvas.pack(fill=tk.X, pady=(4, 0))
         self.progress_canvas.bind("<Button-1>", self._seek_click)
 
@@ -121,12 +121,9 @@ class ClipAnnotator(tk.Toplevel):
         # Playback control buttons
         ctrl = tk.Frame(left, bg="#1e1e1e")
         ctrl.pack()
-        btn = lambda text, cmd: tk.Button(ctrl, text=text, command=cmd,
-                                          bg="#333", fg="white", relief=tk.FLAT,
-                                          padx=10, pady=4)
+        btn = lambda text, cmd: self._mk_button(ctrl, text, cmd)
         btn("◀◀ -5s", lambda: self._seek_relative(-5)).pack(side=tk.LEFT, padx=4)
-        self.play_btn = tk.Button(ctrl, text="⏸ Pause", command=self._toggle_pause,
-                                  bg="#333", fg="white", relief=tk.FLAT, padx=10, pady=4)
+        self.play_btn = self._mk_button(ctrl, "⏸ Pause", self._toggle_pause)
         self.play_btn.pack(side=tk.LEFT, padx=4)
         btn("+5s ▶▶", lambda: self._seek_relative(5)).pack(side=tk.LEFT, padx=4)
 
@@ -149,8 +146,11 @@ class ClipAnnotator(tk.Toplevel):
                      font=("Helvetica", 10)).pack(anchor=tk.W, padx=12, pady=(4, 0))
             var = tk.StringVar(value=initial)
             cb = ttk.Combobox(parent, textvariable=var, values=options,
-                              state="readonly", width=22)
+                              state="readonly", width=22, takefocus=False)
             cb.pack(padx=12, pady=(2, 0))
+            # Return keyboard focus to the window after a selection so the
+            # shortcut keys ([ ] i o n d s f r) keep working afterward.
+            cb.bind("<<ComboboxSelected>>", lambda e: self.focus_set())
             return var
 
         # Metadata dropdowns
@@ -180,10 +180,10 @@ class ClipAnnotator(tk.Toplevel):
                                    bg="#2a2a2a", fg="#FF8C00", font=("Helvetica", 10))
         self.out_label.pack(anchor=tk.W)
 
-        tk.Button(trim_frame, text="Set In-point  [I]", command=self._set_in,
-                  bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X, pady=(6,2))
-        tk.Button(trim_frame, text="Set Out-point [O]", command=self._set_out,
-                  bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X)
+        self._mk_button(trim_frame, "Set In-point  [I]", self._set_in,
+                        bg="#444", padx=8, pady=3).pack(fill=tk.X, pady=(6,2))
+        self._mk_button(trim_frame, "Set Out-point [O]", self._set_out,
+                        bg="#444", padx=8, pady=3).pack(fill=tk.X)
 
         # Event-window controls — mark WHERE the anomaly is visible.
         # Distinct from trim: trim cuts junk; events mark the positive region
@@ -198,19 +198,21 @@ class ClipAnnotator(tk.Toplevel):
         tk.Label(ev_frame, text="Event type", bg="#2a2a2a", fg="#ccc",
                  font=("Helvetica", 10)).pack(anchor=tk.W)
         self.var_event_type = tk.StringVar(value=EVENT_TYPES[0])
-        ttk.Combobox(ev_frame, textvariable=self.var_event_type, values=EVENT_TYPES,
-                     state="readonly", width=22).pack(anchor=tk.W, pady=(2, 4))
+        ev_cb = ttk.Combobox(ev_frame, textvariable=self.var_event_type, values=EVENT_TYPES,
+                             state="readonly", width=22, takefocus=False)
+        ev_cb.pack(anchor=tk.W, pady=(2, 4))
+        ev_cb.bind("<<ComboboxSelected>>", lambda e: self.focus_set())
 
         self.event_label = tk.Label(ev_frame, text="", justify=tk.LEFT,
                                     bg="#2a2a2a", fg="#ff6b6b", font=("Helvetica", 10))
         self.event_label.pack(anchor=tk.W)
 
-        tk.Button(ev_frame, text="Mark event start [ [ ]", command=self._event_start,
-                  bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X, pady=(6,2))
-        tk.Button(ev_frame, text="Mark event end  [ ] ]", command=self._event_end,
-                  bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X)
-        tk.Button(ev_frame, text="Clear events [ \\ ]", command=self._event_clear,
-                  bg="#5a3a3a", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X, pady=(2,0))
+        self._mk_button(ev_frame, "Mark event start [ [ ]", self._event_start,
+                        bg="#444", padx=8, pady=3).pack(fill=tk.X, pady=(6,2))
+        self._mk_button(ev_frame, "Mark event end  [ ] ]", self._event_end,
+                        bg="#444", padx=8, pady=3).pack(fill=tk.X)
+        self._mk_button(ev_frame, "Clear events [ \\ ]", self._event_clear,
+                        bg="#5a3a3a", padx=8, pady=3).pack(fill=tk.X, pady=(2,0))
 
         self._refresh_event_label()
 
@@ -224,16 +226,13 @@ class ClipAnnotator(tk.Toplevel):
             Label.REVIEW:    ("#4a4a4a", "R — Review later"),
         }
         for lbl, (color, text) in label_colors.items():
-            tk.Button(right, text=text,
-                      command=lambda l=lbl: self._save_and_next(l),
-                      bg=color, fg="white", relief=tk.FLAT,
-                      padx=8, pady=5, anchor=tk.W).pack(fill=tk.X, padx=12, pady=2)
+            self._mk_button(right, text, lambda l=lbl: self._save_and_next(l),
+                            bg=color, padx=8, pady=5, anchor=tk.W).pack(fill=tk.X, padx=12, pady=2)
 
         # Delete + skip buttons
         section("ACTIONS")
-        tk.Button(right, text="X — Delete + blocklist", command=self._delete,
-                  bg="#8b0000", fg="white", relief=tk.FLAT,
-                  padx=8, pady=5).pack(fill=tk.X, padx=12, pady=2)
+        self._mk_button(right, "X — Delete + blocklist", self._delete,
+                        bg="#8b0000", padx=8, pady=5).pack(fill=tk.X, padx=12, pady=2)
         tk.Button(right, text="Q — Quit session", command=self._quit,
                   bg="#333", fg="white", relief=tk.FLAT,
                   padx=8, pady=5).pack(fill=tk.X, padx=12, pady=2)
@@ -255,6 +254,26 @@ class ClipAnnotator(tk.Toplevel):
         self.bind("x",            lambda e: self._delete())
         self.bind("q",            lambda e: self._quit())
         self.focus_set()
+
+    def _mk_button(self, parent, text, cmd, **kw):
+        """
+        Build a button that never keeps keyboard focus.
+
+        takefocus=False stops Tab-focus, and after the command runs we hand
+        focus back to the window (guarded with winfo_exists since some commands
+        — label/delete/quit — destroy the window). Without this, clicking a
+        button left focus off the window and the shortcut keys stopped firing.
+        """
+        def run():
+            cmd()
+            try:
+                if self.winfo_exists():
+                    self.focus_set()
+            except tk.TclError:
+                pass
+        opts = dict(bg="#333", fg="white", relief=tk.FLAT, padx=10, pady=4, takefocus=False)
+        opts.update(kw)
+        return tk.Button(parent, text=text, command=run, **opts)
 
     # --- Frame loop ---
 
@@ -309,9 +328,9 @@ class ClipAnnotator(tk.Toplevel):
         self._draw_progress()
 
     def _draw_progress(self):
-        """Redraw the progress bar with current position and trim markers."""
+        """Redraw the progress bar with current position, trim and event markers."""
         w = self.progress_canvas.winfo_width()
-        h = 12
+        h = int(self.progress_canvas.winfo_height()) or 18
         self.progress_canvas.delete("all")
 
         if self.total_sec <= 0 or w <= 1:
@@ -320,19 +339,19 @@ class ClipAnnotator(tk.Toplevel):
         # Background
         self.progress_canvas.create_rectangle(0, 0, w, h, fill="#333", outline="")
 
-        # Played portion
+        # Played portion (thin strip along the bottom so it doesn't hide bands)
         played_w = int(w * self.current_sec / self.total_sec)
-        self.progress_canvas.create_rectangle(0, 0, played_w, h, fill="#4a9a4a", outline="")
+        self.progress_canvas.create_rectangle(0, h - 4, played_w, h, fill="#4a9a4a", outline="")
 
-        # Event windows — translucent bands, colored by event type
-        type_color = {"distress": "#cc3333", "submerged": "#cc8a33", "face_down": "#33aacc"}
+        # Event windows — solid bands across the upper area, colored by type
+        type_color = {"distress": "#e23b3b", "submerged": "#e0922e", "face_down": "#33aacc"}
         for e in self.events:
             xs = int(w * e["start"] / self.total_sec)
-            xe = int(w * e["end"]   / self.total_sec)
-            color = type_color.get(e.get("label"), "#cc3333")
-            self.progress_canvas.create_rectangle(xs, 0, xe, h, fill=color, outline="", stipple="gray50")
+            xe = int(w * max(e["end"], e["start"] + 0.3) / self.total_sec)  # min 0.3s so it's visible
+            color = type_color.get(e.get("label"), "#e23b3b")
+            self.progress_canvas.create_rectangle(xs, 0, xe, h - 4, fill=color, outline="")
 
-        # In/out markers
+        # Trim markers — bright full-height bars (drawn last, on top)
         if self.in_point is not None:
             x = int(w * self.in_point / self.total_sec)
             self.progress_canvas.create_rectangle(x - 2, 0, x + 2, h, fill="#FFD700", outline="")
