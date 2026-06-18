@@ -90,6 +90,15 @@ class ClipAnnotator(tk.Toplevel):
         self._build_ui()
         self._bind_keys()
 
+        # Force the window to the front. On macOS, tkinter windows launched from
+        # a terminal often open *behind* other apps. lift() + a momentary
+        # topmost flag + focus_force pulls it forward; we drop topmost right
+        # after so it doesn't stay pinned above everything.
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(300, lambda: self.attributes("-topmost", False))
+        self.focus_force()
+
         # Start the frame loop after a short delay so the window can render first
         self.after(100, self._next_frame)
 
