@@ -263,6 +263,11 @@ class ClipAnnotator(tk.Toplevel):
         }
         for seq, fn in keys.items():
             self.bind_all(seq, fn)
+        # Also bind the literal bracket/backslash characters in case the
+        # keysym names differ on this keyboard layout — belt and suspenders.
+        self.bind_all("[",  lambda e: self._event_start())
+        self.bind_all("]",  lambda e: self._event_end())
+        self.bind_all("\\", lambda e: self._event_clear())
         self.focus_set()
 
     def _mk_button(self, parent, text, cmd, **kw):
@@ -356,11 +361,15 @@ class ClipAnnotator(tk.Toplevel):
         played_w = int(w * self.current_sec / self.total_sec)
         self.progress_canvas.create_rectangle(0, h - 4, played_w, h, fill="#4a9a4a", outline="")
 
-        # Event windows — solid bands across the upper area, colored by type
+        # Event windows — solid bands across the upper area, colored by type.
+        # Enforce a minimum width in PIXELS (not seconds) so a short event on
+        # a long video is still visible rather than collapsing sub-pixel.
         type_color = {"distress": "#e23b3b", "submerged": "#e0922e", "face_down": "#33aacc"}
         for e in self.events:
             xs = int(w * e["start"] / self.total_sec)
-            xe = int(w * max(e["end"], e["start"] + 0.3) / self.total_sec)  # min 0.3s so it's visible
+            xe = int(w * e["end"]   / self.total_sec)
+            if xe - xs < 4:
+                xe = xs + 4
             color = type_color.get(e.get("label"), "#e23b3b")
             self.progress_canvas.create_rectangle(xs, 0, xe, h - 4, fill=color, outline="")
 
@@ -415,6 +424,8 @@ class ClipAnnotator(tk.Toplevel):
         """Mark the start of an event at the current position."""
         self._event_pending = self.current_sec
         self._refresh_event_label()
+        self._draw_progress()
+        print(f"  Event start pending at {_fmt(self.current_sec)} — press ] to close")
 
     def _event_end(self):
         """Close the pending event and store it with the selected type."""
@@ -430,6 +441,7 @@ class ClipAnnotator(tk.Toplevel):
         self.events.append({"start": start, "end": end, "label": label})
         self._event_pending = None
         self._refresh_event_label()
+        self._draw_progress()
         print(f"  Event marked: {label} {_fmt(start)}–{_fmt(end)}")
 
     def _event_clear(self):
@@ -437,6 +449,7 @@ class ClipAnnotator(tk.Toplevel):
         self.events = []
         self._event_pending = None
         self._refresh_event_label()
+        self._draw_progress()
         print("  Events cleared.")
 
     def _refresh_event_label(self):
