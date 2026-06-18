@@ -75,6 +75,21 @@ class ClipRecord:
     label:        Label
     notes:        str = ""   # free-text, optional
 
+    # Event windows: timestamps (in the same source-video timeline as
+    # start_sec/end_sec) marking WHERE an anomaly is actually visible.
+    # Each element is [event_start_sec, event_end_sec]. A list, not a single
+    # window, so a clip can hold multiple incidents and so a frame-level
+    # ground-truth mask can be generated for evaluation.
+    #
+    # Empty list = no marked events:
+    #   - a `normal` clip has no events (the whole trim span is normal)
+    #   - an anomaly clip's frames OUTSIDE these windows are reusable as
+    #     normal training data; frames INSIDE are the positive for eval
+    #
+    # default_factory=list gives each ClipRecord its own empty list rather
+    # than sharing one mutable list across all instances (a classic bug).
+    events:       list[list[float]] = field(default_factory=list)
+
 
 def make_clip_id(source_url: str, start_sec: float, end_sec: float) -> str:
     """
@@ -141,6 +156,9 @@ class Manifest:
                     weather     = Weather(data["weather"]),
                     label       = Label(data["label"]),
                     notes       = data.get("notes", ""),
+                    # .get with default keeps older manifests (written before
+                    # the events field existed) loading without error.
+                    events      = data.get("events", []),
                 ))
         return records
 

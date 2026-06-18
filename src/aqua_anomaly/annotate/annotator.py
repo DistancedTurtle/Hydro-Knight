@@ -79,6 +79,12 @@ class ClipAnnotator(tk.Toplevel):
         self.in_point  = record.start_sec if record.start_sec > 0   else None
         self.out_point = record.end_sec   if record.end_sec   > 0   else None
 
+        # Event windows — list of [start, end] marking where an anomaly is
+        # actually visible. Seeded from the record. `_event_pending` holds a
+        # start that hasn't been closed with an end yet.
+        self.events: list[list[float]] = [list(e) for e in record.events]
+        self._event_pending: float | None = None
+
         self._build_ui()
         self._bind_keys()
 
@@ -179,6 +185,26 @@ class ClipAnnotator(tk.Toplevel):
         tk.Button(trim_frame, text="Set Out-point [O]", command=self._set_out,
                   bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X)
 
+        # Event-window controls — mark WHERE the anomaly is visible.
+        # Distinct from trim: trim cuts junk; events mark the positive region
+        # while keeping the normal lead-in reusable.
+        section("EVENTS (anomaly visible)")
+        ev_frame = tk.Frame(right, bg="#2a2a2a")
+        ev_frame.pack(fill=tk.X, padx=12, pady=4)
+
+        self.event_label = tk.Label(ev_frame, text="", justify=tk.LEFT,
+                                    bg="#2a2a2a", fg="#ff6b6b", font=("Helvetica", 10))
+        self.event_label.pack(anchor=tk.W)
+
+        tk.Button(ev_frame, text="Mark event start [ [ ]", command=self._event_start,
+                  bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X, pady=(6,2))
+        tk.Button(ev_frame, text="Mark event end  [ ] ]", command=self._event_end,
+                  bg="#444", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X)
+        tk.Button(ev_frame, text="Clear events [ \\ ]", command=self._event_clear,
+                  bg="#5a3a3a", fg="white", relief=tk.FLAT, padx=8, pady=3).pack(fill=tk.X, pady=(2,0))
+
+        self._refresh_event_label()
+
         # Label buttons
         section("LABEL")
         label_colors = {
@@ -209,6 +235,9 @@ class ClipAnnotator(tk.Toplevel):
         self.bind("<Right>",      lambda e: self._seek_relative(5))
         self.bind("i",            lambda e: self._set_in())
         self.bind("o",            lambda e: self._set_out())
+        self.bind("bracketleft",  lambda e: self._event_start())
+        self.bind("bracketright", lambda e: self._event_end())
+        self.bind("backslash",    lambda e: self._event_clear())
         self.bind("n",            lambda e: self._save_and_next(Label.NORMAL))
         self.bind("d",            lambda e: self._save_and_next(Label.DISTRESS))
         self.bind("s",            lambda e: self._save_and_next(Label.SUBMERGED))
@@ -286,6 +315,12 @@ class ClipAnnotator(tk.Toplevel):
         played_w = int(w * self.current_sec / self.total_sec)
         self.progress_canvas.create_rectangle(0, 0, played_w, h, fill="#4a9a4a", outline="")
 
+        # Event windows — translucent red bands over the marked regions
+        for s, e in self.events:
+            xs = int(w * s / self.total_sec)
+            xe = int(w * e / self.total_sec)
+            self.progress_canvas.create_rectangle(xs, 0, xe, h, fill="#cc3333", outline="", stipple="gray50")
+
         # In/out markers
         if self.in_point is not None:
             x = int(w * self.in_point / self.total_sec)
@@ -320,6 +355,42 @@ class ClipAnnotator(tk.Toplevel):
         self.out_point = self.current_sec
         self.out_label.config(text=f"Out: {_fmt(self.out_point)}")
 
+    # --- Event windows ---
+
+    def _event_start(self):
+        """Mark the start of an event at the current position."""
+        self._event_pending = self.current_sec
+        self._refresh_event_label()
+
+    def _event_end(self):
+        """Close the pending event at the current position and store it."""
+        if self._event_pending is None:
+            print("  (press '[' to mark event start first)")
+            return
+        start = self._event_pending
+        end   = self.current_sec
+        # Guard against marking end before start (e.g. after seeking back).
+        if end < start:
+            start, end = end, start
+        self.events.append([start, end])
+        self._event_pending = None
+        self._refresh_event_label()
+        print(f"  Event marked: {_fmt(start)}–{_fmt(end)}")
+
+    def _event_clear(self):
+        """Remove all events and any pending start."""
+        self.events = []
+        self._event_pending = None
+        self._refresh_event_label()
+        print("  Events cleared.")
+
+    def _refresh_event_label(self):
+        """Update the right-panel readout of marked events."""
+        lines = [f"{_fmt(s)}–{_fmt(e)}" for s, e in self.events]
+        if self._event_pending is not None:
+            lines.append(f"{_fmt(self._event_pending)}– (pending…)")
+        self.event_label.config(text="\n".join(lines) if lines else "none")
+
     def _current_metadata(self) -> dict:
         """Read the current dropdown values and return them as a dict."""
         return {
@@ -340,9 +411,10 @@ class ClipAnnotator(tk.Toplevel):
             setting     = meta["setting"],
             time_of_day = meta["time_of_day"],
             weather     = meta["weather"],
+            events      = self.events,
         )
         self.manifest.update(updated)
-        print(f"  Saved: {label.value} | {meta['camera_view'].value} | {meta['setting'].value} | {meta['time_of_day'].value} | {meta['weather'].value}")
+        print(f"  Saved: {label.value} | {meta['camera_view'].value} | {meta['setting'].value} | {meta['time_of_day'].value} | {meta['weather'].value} | events={len(self.events)}")
         self.action = "next"
         self._close()
 
