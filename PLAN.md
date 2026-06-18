@@ -62,6 +62,10 @@ Decision: use joint angles + per-joint velocity as primary features. Revisit if 
 ### Rung 1 — Pose extraction preprocessing *(current next step)*
 Turn video into keypoint time series. MediaPipe over downloaded clips → per-frame keypoint Parquet files, one file per clip, one row per frame per detected person.
 
+**Scene-cut detection (required, runs before pose extraction).** The model's true unit is a *continuous single-camera shot*, not a whole video. A camera-angle cut breaks tracking identity, injects a fake instantaneous pose jump into the temporal signal, and makes a single `camera_view` label dishonest. So preprocess must split each video into single-camera segments before pose extraction (e.g. PySceneDetect content detector, or frame-difference thresholding). Each segment becomes its own continuous unit with its own keypoint timeline.
+
+*Annotation guidance until the cut detector exists:* annotate continuous-shot clips normally. For multi-angle clips, set `camera_view = unknown` and still mark events — events are timestamp-based so each will fall into the correct segment after the split. Per-segment `camera_view` gets assigned/verified in a quick re-review pass once splitting is in place. Don't delete multi-angle clips just for having cuts; the splitting is deferred, not the data.
+
 ### Rung 2 — Simple autoencoder on keypoint sequences
 Train to reconstruct normal swimming. High reconstruction error = anomaly. Get this working end-to-end before anything fancier. Validates the representation before adding temporal complexity.
 
