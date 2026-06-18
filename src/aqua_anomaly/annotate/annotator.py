@@ -79,10 +79,10 @@ class ClipAnnotator(tk.Toplevel):
         self.in_point  = record.start_sec if record.start_sec > 0   else None
         self.out_point = record.end_sec   if record.end_sec   > 0   else None
 
-        # Event windows — list of [start, end] marking where an anomaly is
-        # actually visible. Seeded from the record. `_event_pending` holds a
-        # start that hasn't been closed with an end yet.
-        self.events: list[list[float]] = [list(e) for e in record.events]
+        # Event windows — list of typed dicts {"start","end","label"} marking
+        # where a specific anomaly is visible. Seeded from the record.
+        # `_event_pending` holds a start that hasn't been closed with an end yet.
+        self.events: list[dict] = [dict(e) for e in record.events]
         self._event_pending: float | None = None
 
         self._build_ui()
@@ -191,6 +191,15 @@ class ClipAnnotator(tk.Toplevel):
         section("EVENTS (anomaly visible)")
         ev_frame = tk.Frame(right, bg="#2a2a2a")
         ev_frame.pack(fill=tk.X, padx=12, pady=4)
+
+        # Event-type dropdown: the type assigned to the next event you close
+        # with ']'. Only the anomaly types are valid choices for an event.
+        EVENT_TYPES = [Label.DISTRESS.value, Label.SUBMERGED.value, Label.FACE_DOWN.value]
+        tk.Label(ev_frame, text="Event type", bg="#2a2a2a", fg="#ccc",
+                 font=("Helvetica", 10)).pack(anchor=tk.W)
+        self.var_event_type = tk.StringVar(value=EVENT_TYPES[0])
+        ttk.Combobox(ev_frame, textvariable=self.var_event_type, values=EVENT_TYPES,
+                     state="readonly", width=22).pack(anchor=tk.W, pady=(2, 4))
 
         self.event_label = tk.Label(ev_frame, text="", justify=tk.LEFT,
                                     bg="#2a2a2a", fg="#ff6b6b", font=("Helvetica", 10))
@@ -315,11 +324,13 @@ class ClipAnnotator(tk.Toplevel):
         played_w = int(w * self.current_sec / self.total_sec)
         self.progress_canvas.create_rectangle(0, 0, played_w, h, fill="#4a9a4a", outline="")
 
-        # Event windows — translucent red bands over the marked regions
-        for s, e in self.events:
-            xs = int(w * s / self.total_sec)
-            xe = int(w * e / self.total_sec)
-            self.progress_canvas.create_rectangle(xs, 0, xe, h, fill="#cc3333", outline="", stipple="gray50")
+        # Event windows — translucent bands, colored by event type
+        type_color = {"distress": "#cc3333", "submerged": "#cc8a33", "face_down": "#33aacc"}
+        for e in self.events:
+            xs = int(w * e["start"] / self.total_sec)
+            xe = int(w * e["end"]   / self.total_sec)
+            color = type_color.get(e.get("label"), "#cc3333")
+            self.progress_canvas.create_rectangle(xs, 0, xe, h, fill=color, outline="", stipple="gray50")
 
         # In/out markers
         if self.in_point is not None:
@@ -363,7 +374,7 @@ class ClipAnnotator(tk.Toplevel):
         self._refresh_event_label()
 
     def _event_end(self):
-        """Close the pending event at the current position and store it."""
+        """Close the pending event and store it with the selected type."""
         if self._event_pending is None:
             print("  (press '[' to mark event start first)")
             return
@@ -372,10 +383,11 @@ class ClipAnnotator(tk.Toplevel):
         # Guard against marking end before start (e.g. after seeking back).
         if end < start:
             start, end = end, start
-        self.events.append([start, end])
+        label = self.var_event_type.get()
+        self.events.append({"start": start, "end": end, "label": label})
         self._event_pending = None
         self._refresh_event_label()
-        print(f"  Event marked: {_fmt(start)}–{_fmt(end)}")
+        print(f"  Event marked: {label} {_fmt(start)}–{_fmt(end)}")
 
     def _event_clear(self):
         """Remove all events and any pending start."""
@@ -386,9 +398,9 @@ class ClipAnnotator(tk.Toplevel):
 
     def _refresh_event_label(self):
         """Update the right-panel readout of marked events."""
-        lines = [f"{_fmt(s)}–{_fmt(e)}" for s, e in self.events]
+        lines = [f"{e['label']}: {_fmt(e['start'])}–{_fmt(e['end'])}" for e in self.events]
         if self._event_pending is not None:
-            lines.append(f"{_fmt(self._event_pending)}– (pending…)")
+            lines.append(f"{self.var_event_type.get()}: {_fmt(self._event_pending)}– (pending…)")
         self.event_label.config(text="\n".join(lines) if lines else "none")
 
     def _current_metadata(self) -> dict:

@@ -75,20 +75,23 @@ class ClipRecord:
     label:        Label
     notes:        str = ""   # free-text, optional
 
-    # Event windows: timestamps (in the same source-video timeline as
-    # start_sec/end_sec) marking WHERE an anomaly is actually visible.
-    # Each element is [event_start_sec, event_end_sec]. A list, not a single
-    # window, so a clip can hold multiple incidents and so a frame-level
-    # ground-truth mask can be generated for evaluation.
+    # Event windows: typed time spans (in the same source-video timeline as
+    # start_sec/end_sec) marking WHERE a specific anomaly is visible.
+    # Each element is a dict: {"start": float, "end": float, "label": str}.
+    # The per-event "label" is one of the anomaly Label values
+    # (distress / submerged / face_down), so a single clip can contain
+    # multiple events of DIFFERENT types — e.g. a submersion that becomes
+    # a distress rescue. This also yields a frame-level multi-class mask
+    # for evaluation.
     #
     # Empty list = no marked events:
     #   - a `normal` clip has no events (the whole trim span is normal)
     #   - an anomaly clip's frames OUTSIDE these windows are reusable as
-    #     normal training data; frames INSIDE are the positive for eval
+    #     normal training data; frames INSIDE are the typed positive for eval
     #
     # default_factory=list gives each ClipRecord its own empty list rather
     # than sharing one mutable list across all instances (a classic bug).
-    events:       list[list[float]] = field(default_factory=list)
+    events:       list[dict] = field(default_factory=list)
 
 
 def make_clip_id(source_url: str, start_sec: float, end_sec: float) -> str:
