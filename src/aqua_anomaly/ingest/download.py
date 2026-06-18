@@ -9,12 +9,19 @@ re-running this script skips already-downloaded clips.
 from __future__ import annotations
 
 import os
+import sys
 import subprocess
 from pathlib import Path
 
-# Ensure Homebrew binaries (ffmpeg) are visible to subprocesses even when
-# the shell PATH isn't inherited by the venv.
+# Ensure Homebrew binaries (ffmpeg, node) are visible to subprocesses even
+# when the shell PATH isn't inherited by the venv.
 _ENV = {**os.environ, "PATH": f"/opt/homebrew/bin:/usr/local/bin:{os.environ.get('PATH', '')}"}
+
+# Invoke yt-dlp through THIS interpreter (the venv's python) rather than the
+# bare "yt-dlp" name. Several yt-dlp copies of different ages exist on this
+# machine; the bare name resolved to an old 2023 build without --js-runtimes.
+# "python -m yt_dlp" guarantees the venv's up-to-date version is used.
+_YTDLP = [sys.executable, "-m", "yt_dlp"]
 
 from .manifest import ClipRecord, Manifest
 
@@ -62,10 +69,11 @@ def download_clip(record: ClipRecord, cookies_file: Path | None = None, cookies_
     out_path = local_path(record)
 
     cmd = [
-        "yt-dlp",
+        *_YTDLP,
         record.source_url,
         "--output", str(out_path),
         "--format", "bestvideo[ext=mp4][height<=1080]/bestvideo[height<=1080]/136/135/134", # best mp4 video-only up to 1080p
+        "--js-runtimes", "node",  # use installed Node to run YouTube's JS — without this, yt-dlp falls back to throttled clients and only gets images
         "--quiet",
         "--no-playlist",
     ]
