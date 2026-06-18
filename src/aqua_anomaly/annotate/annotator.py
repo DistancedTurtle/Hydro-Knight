@@ -517,21 +517,34 @@ class ClipAnnotator(tk.Toplevel):
 
 def annotate(
     manifest_path: Path,
-    only_unlabeled: bool = True,
+    include_review: bool = False,
+    review_only: bool = False,
 ) -> None:
+    """
+    Run an annotation session over downloaded clips.
+
+    By default only UNLABELED clips are queued — clips you left as REVIEW are
+    skipped so you don't re-see them every session.
+
+    - include_review=True : also queue REVIEW clips alongside unlabeled
+    - review_only=True     : queue ONLY the REVIEW clips (a dedicated review pass)
+    """
     manifest  = Manifest(manifest_path)
     blocklist = Blocklist()
     records   = manifest.load()
 
-    queue = [
-        r for r in records
-        if is_downloaded(r) and (
-            not only_unlabeled or r.label in (Label.UNLABELED, Label.REVIEW)
-        )
-    ]
+    if review_only:
+        wanted = {Label.REVIEW}
+    elif include_review:
+        wanted = {Label.UNLABELED, Label.REVIEW}
+    else:
+        wanted = {Label.UNLABELED}
+
+    queue = [r for r in records if is_downloaded(r) and r.label in wanted]
 
     if not queue:
-        print("No clips to annotate. Run download.py first, or set only_unlabeled=False to re-review.")
+        print("No clips to annotate. Run download.py first, "
+              "or pass include_review=True / review_only=True to revisit REVIEW clips.")
         return
 
     print(f"{len(queue)} clips in queue.")
