@@ -73,7 +73,11 @@ def download_clip(record: ClipRecord, cookies_file: Path | None = None, cookies_
         record.source_url,
         "--output", str(out_path),
         "--format", "bestvideo[ext=mp4][height<=1080]/bestvideo[height<=1080]/136/135/134", # best mp4 video-only up to 1080p
-        "--js-runtimes", "node",  # use installed Node to run YouTube's JS — without this, yt-dlp falls back to throttled clients and only gets images
+        "--js-runtimes", "node",  # use installed Node to run YouTube's JS
+        # YouTube's upgraded "n challenge" now needs yt-dlp's remote EJS solver
+        # script (fetched from its official GitHub) run via Node. Without this,
+        # extraction yields "only images" -> "requested format is not available".
+        "--remote-components", "ejs:github",
         "--quiet",
         "--no-playlist",
     ]
