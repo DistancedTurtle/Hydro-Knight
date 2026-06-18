@@ -82,9 +82,16 @@ def download_clip(record: ClipRecord, cookies_file: Path | None = None, cookies_
     elif cookies_from_browser:
         cmd += ["--cookies-from-browser", cookies_from_browser]
 
-    # Trimming is handled non-destructively in the annotator — the full video
-    # is downloaded and start_sec/end_sec in the manifest tell downstream
-    # steps (pose extraction) which segment to actually process.
+    # Section download for clips with a real start offset (e.g. a 9.5h slice of
+    # a 12h livestream). Downloading the full source would be wasteful/huge.
+    # Convention: the local file always corresponds to the manifest's
+    # [start_sec, end_sec] window. For a sectioned download the file is
+    # re-based to 0, so the pose-extraction step maps file-time t to
+    # source-time (start_sec + t); events (source timeline) map in the same way.
+    # Clips with start_sec == 0 download whole (the common short-clip case).
+    if record.start_sec and record.start_sec > 0 and record.end_sec and record.end_sec > 0:
+        cmd += ["--download-sections", f"*{record.start_sec}-{record.end_sec}",
+                "--force-keyframes-at-cuts"]  # accurate cut points (needs ffmpeg)
 
     result = subprocess.run(cmd, capture_output=True, text=True, env=_ENV)
 
