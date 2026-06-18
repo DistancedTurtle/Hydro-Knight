@@ -11,7 +11,9 @@ Keyboard shortcuts
 ------------------
   SPACE         pause / resume
   LEFT / RIGHT  seek -5s / +5s
-  I / O         set in-point / out-point at current position
+  I / O         set trim in-point / out-point at current position
+  [ / ]         mark event start / end (uses the Event-type dropdown)
+  \\            clear all events
   N/D/S/F/R     label normal / distress / submerged / face_down / review
   X             delete clip (blocklist + remove files)
   Q             quit session
@@ -238,21 +240,29 @@ class ClipAnnotator(tk.Toplevel):
                   padx=8, pady=5).pack(fill=tk.X, padx=12, pady=2)
 
     def _bind_keys(self):
-        self.bind("<space>",      lambda e: self._toggle_pause())
-        self.bind("<Left>",       lambda e: self._seek_relative(-5))
-        self.bind("<Right>",      lambda e: self._seek_relative(5))
-        self.bind("i",            lambda e: self._set_in())
-        self.bind("o",            lambda e: self._set_out())
-        self.bind("bracketleft",  lambda e: self._event_start())
-        self.bind("bracketright", lambda e: self._event_end())
-        self.bind("backslash",    lambda e: self._event_clear())
-        self.bind("n",            lambda e: self._save_and_next(Label.NORMAL))
-        self.bind("d",            lambda e: self._save_and_next(Label.DISTRESS))
-        self.bind("s",            lambda e: self._save_and_next(Label.SUBMERGED))
-        self.bind("f",            lambda e: self._save_and_next(Label.FACE_DOWN))
-        self.bind("r",            lambda e: self._save_and_next(Label.REVIEW))
-        self.bind("x",            lambda e: self._delete())
-        self.bind("q",            lambda e: self._quit())
+        # bind_all binds at the application level, so a shortcut fires no matter
+        # which child widget (canvas, button, dropdown) currently has focus.
+        # Plain self.bind only fired when the Toplevel itself had focus, which
+        # is why keys silently stopped working after clicking a dropdown.
+        keys = {
+            "<space>":      lambda e: self._toggle_pause(),
+            "<Left>":       lambda e: self._seek_relative(-5),
+            "<Right>":      lambda e: self._seek_relative(5),
+            "i":            lambda e: self._set_in(),
+            "o":            lambda e: self._set_out(),
+            "bracketleft":  lambda e: self._event_start(),
+            "bracketright": lambda e: self._event_end(),
+            "backslash":    lambda e: self._event_clear(),
+            "n":            lambda e: self._save_and_next(Label.NORMAL),
+            "d":            lambda e: self._save_and_next(Label.DISTRESS),
+            "s":            lambda e: self._save_and_next(Label.SUBMERGED),
+            "f":            lambda e: self._save_and_next(Label.FACE_DOWN),
+            "r":            lambda e: self._save_and_next(Label.REVIEW),
+            "x":            lambda e: self._delete(),
+            "q":            lambda e: self._quit(),
+        }
+        for seq, fn in keys.items():
+            self.bind_all(seq, fn)
         self.focus_set()
 
     def _mk_button(self, parent, text, cmd, **kw):
@@ -287,6 +297,9 @@ class ClipAnnotator(tk.Toplevel):
         when the window is destroyed.
         """
         if self.paused:
+            # Keep the progress bar live while paused so trim/event markers
+            # appear the moment they're set.
+            self._draw_progress()
             self.after(FRAME_DELAY_MS, self._next_frame)
             return
 
@@ -368,6 +381,7 @@ class ClipAnnotator(tk.Toplevel):
     def _seek_relative(self, delta_sec: float):
         target = max(0.0, min(self.total_sec, self.current_sec + delta_sec))
         self.cap.set(cv2.CAP_PROP_POS_MSEC, target * 1000)
+        self._refresh_if_paused()
 
     def _seek_click(self, event):
         """Seek to position clicked on the progress bar."""
@@ -376,6 +390,16 @@ class ClipAnnotator(tk.Toplevel):
             return
         ratio = event.x / w
         self.cap.set(cv2.CAP_PROP_POS_MSEC, ratio * self.total_sec * 1000)
+        self._refresh_if_paused()
+
+    def _refresh_if_paused(self):
+        """When paused, read and show the frame at the new seek position."""
+        if not self.paused:
+            return
+        ret, frame = self.cap.read()
+        if ret:
+            self.current_sec = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            self._update_display(frame)
 
     def _set_in(self):
         self.in_point = self.current_sec
