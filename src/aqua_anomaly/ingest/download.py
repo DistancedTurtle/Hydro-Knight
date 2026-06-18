@@ -90,8 +90,10 @@ def download_clip(record: ClipRecord, cookies_file: Path | None = None, cookies_
     # source-time (start_sec + t); events (source timeline) map in the same way.
     # Clips with start_sec == 0 download whole (the common short-clip case).
     if record.start_sec and record.start_sec > 0 and record.end_sec and record.end_sec > 0:
-        cmd += ["--download-sections", f"*{record.start_sec}-{record.end_sec}",
-                "--force-keyframes-at-cuts"]  # accurate cut points (needs ffmpeg)
+        # Cut at nearest keyframes (no --force-keyframes-at-cuts): a stream copy
+        # that's fast and avoids a multi-hour re-encode on long sections. Start/
+        # end may be off by a few seconds, which is fine for our purposes.
+        cmd += ["--download-sections", f"*{record.start_sec}-{record.end_sec}"]
 
     result = subprocess.run(cmd, capture_output=True, text=True, env=_ENV)
 
