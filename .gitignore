@@ -2,6 +2,9 @@
 # Cookie files must never be committed
 *cookies*.txt
 
+# Model weight files (auto-downloaded, large, not source)
+*.pt
+
 # Raw video files are never committed (size, copyright, privacy)
 raw_local/
 *.mp4
