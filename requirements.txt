@@ -7,11 +7,13 @@ opencv-python>=4.9.0          # video frame reading / drawing
 Pillow>=10.0.0                # converts OpenCV frames to tkinter-compatible images
 
 # --- Pose extraction (preprocess/) ---
-ultralytics>=8.4.0            # YOLO-pose detection + tracking (pulls in torch)
+ultralytics>=8.4.0            # YOLO-pose detection (pulls in torch)
 mediapipe>=0.10.0             # alt pose backend (spike comparison)
+supervision>=0.29.0          # Detections container feeding the tracker
+trackers>=2.4.0              # ByteTrack/BoT-SORT over SAHI-merged detections
 numpy>=1.26.0
 pandas>=2.2.0                 # assemble keypoint tables
-pyarrow>=15.0.0               # Parquet file format for keypoint storage
+pyarrow>=15.0.0              # Parquet file format for keypoint storage
 
 # --- Dev / testing ---
 # pytest>=8.0.0

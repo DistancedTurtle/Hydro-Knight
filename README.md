@@ -55,3 +55,17 @@ distant swimmers below detectability. Running the same frame at 1280px recovered
 
 Reproduce the figures: `PYTHONPATH=src .venv/bin/python scripts/make_pose_figure.py`
 (reads a local clip; the spike tool is [`pose_spike.py`](src/aqua_anomaly/preprocess/pose_spike.py)).
+
+### Recovering distant swimmers: tiling (SAHI) + tracking
+
+Whole-frame inference downscales far swimmers below detectability. **SAHI** —
+slice into overlapping tiles, run YOLO on each *upscaled* (tile < imgsz), map
+back, NMS-merge — took recall from ~13 to ~50 swimmers/frame on a crowded clip
+(only helps when `imgsz > tile`; otherwise no zoom).
+
+For identity across frames, YOLO's built-in tracker can't run on merged tiled
+detections, so tracking is decoupled. A naive IoU tracker churned badly (53
+tracks, 11 single-frame); **ByteTrack** (model-agnostic, via `trackers`) cut
+that to 15 tracks with **0 flicker** — the stability the not-surfacing signal
+needs. BoT-SORT/OC-SORT (with re-ID) are the future option if re-identifying a
+swimmer *after* a submersion gap becomes the bottleneck.

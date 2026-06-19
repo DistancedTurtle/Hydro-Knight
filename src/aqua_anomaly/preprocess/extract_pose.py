@@ -17,10 +17,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pandas as pd
+import supervision as sv
 from ultralytics import YOLO
+from trackers import ByteTrackTracker
 
 from .tiled_pose import detect_tiled
-from .tracking import SimpleTracker
 
 # 17 COCO keypoints, in the order YOLO returns them.
 KEYPOINT_NAMES = [
@@ -113,19 +114,22 @@ def extract_tiled(
     max_frames: int | None = None,
 ) -> int:
     """
-    SAHI extraction: tiled detection + a standalone tracker -> Parquet.
+    SAHI extraction: tiled detection + ByteTrack -> Parquet.
 
     Same output schema as extract(), but recovers far more distant swimmers
     via tiling. Much slower (many inferences per frame) — GPU territory for
-    full clips. Tracking is our SimpleTracker (IoU), since YOLO's built-in
-    tracker can't run on externally-merged detections.
+    full clips. Tracking is ByteTrack (from the `trackers` package), run on
+    the merged tiled detections since YOLO's built-in tracker can't.
+    A keypoint index is carried through the tracker so tracked boxes map back
+    to their keypoints. track_id -1 = a detection not yet confirmed as a track.
     """
     video_path = Path(video_path)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     model = YOLO(model_name)
-    tracker = SimpleTracker()
+    tracker = ByteTrackTracker(track_activation_threshold=0.3,
+                               minimum_consecutive_frames=2)
     cap = cv2.VideoCapture(str(video_path))
 
     rows: list[list[float]] = []
@@ -139,10 +143,19 @@ def extract_tiled(
 
         dets = detect_tiled(model, frame, tile=tile, overlap=overlap,
                             imgsz=imgsz, conf=conf)
-        boxes = [d[0] for d in dets]
-        ids = tracker.update(boxes)
-        for (box, c, kpts), tid in zip(dets, ids):
-            row = [frame_idx, tid, float(c)]
+        if dets:
+            detections = sv.Detections(
+                xyxy=np.array([d[0] for d in dets], dtype=float),
+                confidence=np.array([d[1] for d in dets], dtype=float),
+                class_id=np.zeros(len(dets), dtype=int))
+            detections.data["kp_idx"] = np.arange(len(dets))  # map tracked -> keypoints
+        else:
+            detections = sv.Detections.empty()
+
+        tracked = tracker.update(detections, frame)
+        for j in range(len(tracked)):
+            kpts = dets[int(tracked.data["kp_idx"][j])][2]
+            row = [frame_idx, int(tracked.tracker_id[j]), float(tracked.confidence[j])]
             row.extend(kpts.flatten().tolist())
             rows.append(row)
         frame_idx += 1
