@@ -14,9 +14,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pandas as pd
 from ultralytics import YOLO
+
+from .tiled_pose import detect_tiled
+from .tracking import SimpleTracker
 
 # 17 COCO keypoints, in the order YOLO returns them.
 KEYPOINT_NAMES = [
@@ -98,8 +102,62 @@ def extract(
     return len(df)
 
 
+def extract_tiled(
+    video_path: Path,
+    out_path: Path,
+    model_name: str = "yolo11n-pose.pt",
+    tile: int = 480,
+    imgsz: int = 1280,
+    overlap: float = 0.25,
+    conf: float = 0.25,
+    max_frames: int | None = None,
+) -> int:
+    """
+    SAHI extraction: tiled detection + a standalone tracker -> Parquet.
+
+    Same output schema as extract(), but recovers far more distant swimmers
+    via tiling. Much slower (many inferences per frame) — GPU territory for
+    full clips. Tracking is our SimpleTracker (IoU), since YOLO's built-in
+    tracker can't run on externally-merged detections.
+    """
+    video_path = Path(video_path)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    model = YOLO(model_name)
+    tracker = SimpleTracker()
+    cap = cv2.VideoCapture(str(video_path))
+
+    rows: list[list[float]] = []
+    frame_idx = 0
+    while True:
+        if max_frames is not None and frame_idx >= max_frames:
+            break
+        ok, frame = cap.read()
+        if not ok:
+            break
+
+        dets = detect_tiled(model, frame, tile=tile, overlap=overlap,
+                            imgsz=imgsz, conf=conf)
+        boxes = [d[0] for d in dets]
+        ids = tracker.update(boxes)
+        for (box, c, kpts), tid in zip(dets, ids):
+            row = [frame_idx, tid, float(c)]
+            row.extend(kpts.flatten().tolist())
+            rows.append(row)
+        frame_idx += 1
+
+    cap.release()
+    df = pd.DataFrame(rows, columns=COLUMNS)
+    df.to_parquet(out_path, index=False)
+    print(f"{video_path.name} (tiled): {len(df)} detections across {frame_idx} "
+          f"frames, {df['track_id'].nunique() if len(df) else 0} tracks -> {out_path}")
+    return len(df)
+
+
 if __name__ == "__main__":
     import sys
     video = Path(sys.argv[1])
+    tiled = "--tiled" in sys.argv
     out = Path("data/keypoints") / f"{video.stem}.parquet"
-    extract(video, out)
+    (extract_tiled if tiled else extract)(video, out)
