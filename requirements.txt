@@ -1,5 +1,6 @@
 # --- Data collection ---
 yt-dlp>=2024.1.1          # YouTube metadata search and video download
+certifi>=2024.0.0         # CA bundle for SSL verification (yt-dlp HTTPS requests)
 
 # --- Annotation tool + pose extraction ---
 opencv-python>=4.9.0          # video frame reading
