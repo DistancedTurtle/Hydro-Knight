@@ -60,7 +60,15 @@ Decision: use joint angles + per-joint velocity as primary features. Revisit if 
 ## Build progression
 
 ### Rung 1 — Pose extraction preprocessing *(current next step)*
-Turn video into keypoint time series. MediaPipe over downloaded clips → per-frame keypoint Parquet files, one file per clip, one row per frame per detected person.
+Turn video into keypoint time series → per-frame keypoint Parquet files, one file per clip, one row per frame per detected person.
+
+**Pose backend: YOLO-pose primary, MediaPipe fallback — decide via a head-to-head spike.** The pose estimator is a *swappable* preprocessing choice: both backends output the same downstream representation (per-person, per-frame keypoints + confidence), so features/models/state-machine don't care which produced them. Pick empirically.
+
+- **YOLO-pose (Ultralytics YOLOv8/v11-pose) — leading candidate.** Natively **multi-person** (one pass finds every swimmer — pools are crowded; classic MediaPipe Pose is single-person). Ships **built-in tracking** (ByteTrack/BoT-SORT via `model.track()`), which gives per-swimmer IDs for free and **may subsume Rung 2.5 entirely**. One actively-maintained pipeline (detect + pose + track). 17 COCO keypoints (2D). License: AGPL-3.0 (fine for non-commercial portfolio; note obligations if it ever goes commercial).
+- **MediaPipe — fallback.** 33 keypoints + a rough monocular 3D estimate; CPU-optimized; Apache-2.0. But single-person by default (needs detector+crop per swimmer for crowded scenes) and a less stable Python API.
+- **Both share the key risk:** trained on land-based upright humans → both degrade on prone/submerged swimmers. The spike validates this at the same time.
+
+**The Rung 1 spike (do first):** run YOLO-pose *and* MediaPipe on the same clips (a meet, the reef, a rescue) and compare which actually detects swimmers — especially small, distant, and submerging ones. That single experiment picks the backend and de-risks the aquatic-domain assumption the whole architecture rests on.
 
 **Scene-cut detection (required, runs before pose extraction).** The model's true unit is a *continuous single-camera shot*, not a whole video. A camera-angle cut breaks tracking identity, injects a fake instantaneous pose jump into the temporal signal, and makes a single `camera_view` label dishonest. So preprocess must split each video into single-camera segments before pose extraction (e.g. PySceneDetect content detector, or frame-difference thresholding). Each segment becomes its own continuous unit with its own keypoint timeline.
 
@@ -70,6 +78,8 @@ Turn video into keypoint time series. MediaPipe over downloaded clips → per-fr
 Train to reconstruct normal swimming. High reconstruction error = anomaly. Get this working end-to-end before anything fancier. Validates the representation before adding temporal complexity.
 
 ### Rung 2.5 — Lightweight tracking *(run in parallel with Rung 2, not deferred)*
+**May be subsumed by the pose backend:** if Rung 1 selects YOLO-pose, its built-in `model.track()` (ByteTrack/BoT-SORT) already provides per-swimmer IDs, so this rung could collapse into pose extraction. The notes below still apply if MediaPipe is chosen (tracking must then be bolted on separately).
+
 ByteTrack or DeepSORT for bounding-box-level identity continuity. Originally planned as Rung 4, but moved up because:
 - "Not resurfaced in N seconds" is arguably the most important signal
 - It requires identity continuity **across a submersion gap**
@@ -86,6 +96,11 @@ at_surface → submerged → resurfaced   (normal)
 at_surface → submerged → [timer] → ALERT   (not-surfacing anomaly)
 ```
 ML scores anomalies; logic handles explicit temporal rules. Combines the autoencoder scores with the state machine to produce alerts.
+
+### Compute strategy
+- **Local (MacBook):** ingestion, annotation, dev/iteration, small spikes. CPU/MPS only.
+- **Colab / Kaggle (GPU available):** the heavy lifting — batch pose extraction over the full clip set (YOLO-pose runs much faster on GPU), and model training (Rungs 2–4). This removes YOLO's "wants a GPU" downside entirely.
+- **Hand-off between them is the manifest + keypoint Parquet files**, not raw video: extract poses on GPU, commit the lightweight keypoint files, train from those. Keeps the heavy data off the laptop and off the repo.
 
 ---
 
