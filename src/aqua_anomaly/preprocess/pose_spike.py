@@ -40,7 +40,7 @@ def _draw_mp_pose(img, poses, connections):
             cv2.circle(img, p, 3, (0, 0, 255), -1)
 
 
-def compare(video_path: Path, out_dir: Path, n_frames: int = 8) -> None:
+def compare(video_path: Path, out_dir: Path, n_frames: int = 8, imgsz: int = 640) -> None:
     video_path = Path(video_path)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -65,7 +65,7 @@ def compare(video_path: Path, out_dir: Path, n_frames: int = 8) -> None:
         if not ok:
             continue
 
-        yolo_result = yolo(frame, verbose=False)[0]
+        yolo_result = yolo(frame, verbose=False, imgsz=imgsz)[0]
         yolo_img = yolo_result.plot()
         yolo_count = len(yolo_result.boxes)
 
@@ -94,4 +94,7 @@ def compare(video_path: Path, out_dir: Path, n_frames: int = 8) -> None:
 
 if __name__ == "__main__":
     import sys
-    compare(Path(sys.argv[1]), Path("raw_local/pose_spike_out"), n_frames=8)
+    video = Path(sys.argv[1])
+    imgsz = int(sys.argv[2]) if len(sys.argv) > 2 else 640
+    out = Path("raw_local/pose_spike_out") / f"{video.stem}_imgsz{imgsz}"
+    compare(video, out, n_frames=8, imgsz=imgsz)
