@@ -54,7 +54,8 @@ from aqua_anomaly.ingest.manifest import Manifest, Label
 from aqua_anomaly.preprocess.extract_pose import extract_tiled, extract
 
 recs = Manifest(Path("data/manifests/pool_footage.jsonl")).load()
-clips = [r for r in recs if (RAW / f"{r.clip_id}.mp4").exists()]
+# skip clips tagged [HOLD] in notes (e.g. indoor/out-of-scope held from v1 training)
+clips = [r for r in recs if (RAW / f"{r.clip_id}.mp4").exists() and "[HOLD" not in r.notes]
 print(f"{len(clips)} clips to extract")
 
 KP = Path("data/keypoints"); KP.mkdir(parents=True, exist_ok=True)
