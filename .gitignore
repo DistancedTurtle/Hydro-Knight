@@ -5,6 +5,10 @@
 # Model weight files (auto-downloaded, large, not source)
 *.pt
 
+# Extracted keypoint tables — regenerable from video; can be large.
+# (commit strategy for the final training set TBD; ignored during dev)
+data/keypoints/
+
 # Raw video files are never committed (size, copyright, privacy)
 raw_local/
 *.mp4

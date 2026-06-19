@@ -2,16 +2,16 @@
 yt-dlp>=2024.1.1          # YouTube metadata search and video download
 certifi>=2024.0.0         # CA bundle for SSL verification (yt-dlp HTTPS requests)
 
-# --- Annotation tool + pose extraction ---
-opencv-python>=4.9.0          # video frame reading
+# --- Annotation tool ---
+opencv-python>=4.9.0          # video frame reading / drawing
 Pillow>=10.0.0                # converts OpenCV frames to tkinter-compatible images
-# mediapipe>=0.10.0           # pose extraction (needed for preprocess/)
 
-# --- Model training (needed for models/) ---
-# torch>=2.2.0
-# numpy>=1.26.0
-# pandas>=2.2.0
-# pyarrow>=15.0.0          # Parquet file format for keypoint storage
+# --- Pose extraction (preprocess/) ---
+ultralytics>=8.4.0            # YOLO-pose detection + tracking (pulls in torch)
+mediapipe>=0.10.0             # alt pose backend (spike comparison)
+numpy>=1.26.0
+pandas>=2.2.0                 # assemble keypoint tables
+pyarrow>=15.0.0               # Parquet file format for keypoint storage
 
 # --- Dev / testing ---
 # pytest>=8.0.0
