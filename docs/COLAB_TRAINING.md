@@ -74,9 +74,10 @@ for i, r in enumerate(clips, 1):
     out = KP / f"{r.clip_id}.parquet"
     if out.exists():
         continue
-    # FAST first pass: 640px + cap ~25s/clip. Raise imgsz to 1280 / drop max_frames
-    # for a fuller run; swap to extract_tiled(...) for the SAHI recall upgrade.
-    extract(RAW / f"{r.clip_id}.mp4", out, imgsz=640, max_frames=600, device=0)
+    # imgsz=640 is the speedup (~4x vs 1280). Do NOT cap frames: many distress
+    # events occur >25s in, so each clip must be extracted in full to include
+    # them. (Raise to imgsz=1280 / swap to extract_tiled for the recall upgrade.)
+    extract(RAW / f"{r.clip_id}.mp4", out, imgsz=640, device=0)
     print(f"[{i}/{len(clips)}] {r.clip_id} done")
 ```
 > `extract()` is the fast whole-frame path (~1 inference/frame); `extract_tiled()`
