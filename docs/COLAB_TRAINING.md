@@ -50,12 +50,19 @@ print("videos found:", len(list(RAW.glob("*.mp4"))))
 ### Cell 3 — extract poses (the slow GPU step)
 ```python
 import warnings; warnings.simplefilter("ignore")
+import cv2
 from aqua_anomaly.ingest.manifest import Manifest, Label
-from aqua_anomaly.preprocess.extract_pose import extract_tiled, extract
+from aqua_anomaly.preprocess.extract_pose import extract, extract_tiled
+
+def _readable(p):                      # skip missing / 0-byte / unreadable clips
+    c = cv2.VideoCapture(str(p)); ok = c.isOpened() and c.get(cv2.CAP_PROP_FRAME_COUNT) > 0; c.release()
+    return ok
 
 recs = Manifest(Path("data/manifests/pool_footage.jsonl")).load()
-# skip clips tagged [HOLD] in notes (e.g. indoor/out-of-scope held from v1 training)
-clips = [r for r in recs if (RAW / f"{r.clip_id}.mp4").exists() and "[HOLD" not in r.notes]
+clips = [r for r in recs
+         if (RAW / f"{r.clip_id}.mp4").exists()
+         and "[HOLD" not in r.notes               # skip held (indoor/out-of-scope) clips
+         and _readable(RAW / f"{r.clip_id}.mp4")]  # skip dead/0-byte (e.g. evicted reef) clips
 print(f"{len(clips)} clips to extract")
 
 KP = Path("data/keypoints"); KP.mkdir(parents=True, exist_ok=True)
@@ -63,13 +70,14 @@ for i, r in enumerate(clips, 1):
     out = KP / f"{r.clip_id}.parquet"
     if out.exists():
         continue
-    # extract_tiled = SAHI (max recall, slower). Swap to extract(...) for a fast first pass.
-    extract_tiled(RAW / f"{r.clip_id}.mp4", out)
+    extract(RAW / f"{r.clip_id}.mp4", out)         # fast first pass
+    # for the recall upgrade later, swap to: extract_tiled(RAW / f"{r.clip_id}.mp4", out)
     print(f"[{i}/{len(clips)}] {r.clip_id} done")
 ```
-> Tip: SAHI over all clips is heavy. For a first run use `extract(...)` (fast,
-> whole-frame) or skip the reef chunks. Save `data/keypoints/` back to Drive so
-> you don't re-extract.
+> `extract()` is the fast whole-frame path (~1 inference/frame); `extract_tiled()`
+> is SAHI (~7×, max recall) — use it only for a later recall run. The `_readable`
+> guard skips evicted/0-byte clips so the loop never stalls on them. Save
+> `data/keypoints/` back to Drive so you don't re-extract.
 
 ### Cell 4 — build the labeled, windowed dataset
 ```python
