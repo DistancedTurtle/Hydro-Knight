@@ -65,13 +65,18 @@ clips = [r for r in recs
          and _readable(RAW / f"{r.clip_id}.mp4")]  # skip dead/0-byte (e.g. evicted reef) clips
 print(f"{len(clips)} clips to extract")
 
+import torch
+assert torch.cuda.is_available(), "No GPU! Runtime > Change runtime type > T4 GPU"
+print("GPU:", torch.cuda.get_device_name(0))
+
 KP = Path("data/keypoints"); KP.mkdir(parents=True, exist_ok=True)
 for i, r in enumerate(clips, 1):
     out = KP / f"{r.clip_id}.parquet"
     if out.exists():
         continue
-    extract(RAW / f"{r.clip_id}.mp4", out)         # fast first pass
-    # for the recall upgrade later, swap to: extract_tiled(RAW / f"{r.clip_id}.mp4", out)
+    # FAST first pass: 640px + cap ~25s/clip. Raise imgsz to 1280 / drop max_frames
+    # for a fuller run; swap to extract_tiled(...) for the SAHI recall upgrade.
+    extract(RAW / f"{r.clip_id}.mp4", out, imgsz=640, max_frames=600, device=0)
     print(f"[{i}/{len(clips)}] {r.clip_id} done")
 ```
 > `extract()` is the fast whole-frame path (~1 inference/frame); `extract_tiled()`
