@@ -1,4 +1,7 @@
 # --- Project-specific ---
+# Personal dev notes (not committed)
+DEV_WALKTHROUGH.md
+
 # Cookie files must never be committed
 *cookies*.txt
 
