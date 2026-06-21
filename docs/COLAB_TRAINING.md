@@ -33,8 +33,11 @@ give both normal and distress.
 import torch; print("GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NONE — set Runtime>GPU")
 !git clone https://github.com/DistancedTurtle/Hydro-Knight.git
 %cd Hydro-Knight
+# Colab ships a GPU build of torch; install the rest explicitly so it isn't clobbered.
 !pip -q install ultralytics trackers supervision opencv-python pandas pyarrow scikit-learn
-import sys; sys.path.insert(0, "src")   # make `aqua_anomaly` importable
+# editable-install just the local package (no deps -> leaves Colab's torch intact),
+# which makes `aqua_anomaly` importable without any sys.path hack.
+!pip -q install -e . --no-deps
 ```
 
 ### Cell 2 — mount videos from Drive

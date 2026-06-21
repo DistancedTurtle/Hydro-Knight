@@ -14,6 +14,20 @@ See [PLAN.md](PLAN.md) for the full architecture and build progression.
 
 ---
 
+## Setup
+
+Managed with [uv](https://docs.astral.sh/uv/). From the repo root:
+
+```bash
+uv sync                 # build the env from pyproject.toml + uv.lock
+uv run python -c "import aqua_anomaly"   # editable install — no PYTHONPATH needed
+```
+
+`uv sync --extra spike` additionally installs MediaPipe (only needed to reproduce
+the YOLO-vs-MediaPipe backend comparison). Run any script/module with `uv run …`.
+
+---
+
 ## Engineering decisions
 
 ### Choosing the pose backend: YOLO-pose vs MediaPipe (and the resolution that actually mattered)
@@ -53,7 +67,7 @@ distant swimmers below detectability. Running the same frame at 1280px recovered
 - **The pose approach is viable, with conditions:** it needs high-resolution inference and *populated* footage. An empty pool yields no poses, so data priority shifted toward busy-pool sources (lap sessions, swim practice) over clean-but-empty resort cams.
 - **Both backends share the core risk:** trained on land-based upright humans, both degrade on prone/submerged swimmers — the next thing to validate, and a likely candidate for swim-specific fine-tuning later.
 
-Reproduce the figures: `PYTHONPATH=src .venv/bin/python scripts/make_pose_figure.py`
+Reproduce the figures: `uv run python scripts/make_pose_figure.py`
 (reads a local clip; the spike tool is [`pose_spike.py`](src/aqua_anomaly/preprocess/pose_spike.py)).
 
 ### Recovering distant swimmers: tiling (SAHI) + tracking
