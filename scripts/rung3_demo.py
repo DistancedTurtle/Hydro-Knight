@@ -18,8 +18,8 @@ import sys
 import numpy as np
 import pandas as pd
 
-from aqua_anomaly.features.windows import make_windows
-from aqua_anomaly.models.tcn_autoencoder import train_tcn, reconstruction_error
+from hydro_knight.features.windows import make_windows
+from hydro_knight.models.tcn_autoencoder import train_tcn, reconstruction_error
 
 WINDOW = 32
 

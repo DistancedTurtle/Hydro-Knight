@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Pose-based anomaly detection for swimming-pool drowning safety."
 readme = "README.md"
 requires-python = ">=3.11"
+# AGPL-3.0 because this depends on Ultralytics YOLO (AGPL-3.0); a public work
+# that links AGPL code must itself be AGPL. SPDX expression per PEP 639.
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 dependencies = [
     # --- Data collection ---
     "yt-dlp>=2024.1.1",        # YouTube metadata search and video download
@@ -30,11 +34,17 @@ spike = ["mediapipe>=0.10.0"]
 [dependency-groups]
 dev = ["pytest>=8.0.0"]
 
+[tool.pytest.ini_options]
+# Look for tests only under tests/, and treat plain `assert` as the assertion
+# mechanism (pytest rewrites them into rich failure messages).
+testpaths = ["tests"]
+addopts = "-q"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 # src-layout: tell the build backend where the importable package lives, so
-# `uv sync` installs it editable and `import aqua_anomaly` works with no PYTHONPATH.
+# `uv sync` installs it editable and `import hydro_knight` works with no PYTHONPATH.
 [tool.hatch.build.targets.wheel]
-packages = ["src/aqua_anomaly"]
+packages = ["src/hydro_knight"]

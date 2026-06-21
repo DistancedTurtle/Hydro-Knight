@@ -36,7 +36,7 @@ import torch; print("GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_avail
 # Colab ships a GPU build of torch; install the rest explicitly so it isn't clobbered.
 !pip -q install ultralytics trackers supervision opencv-python pandas pyarrow scikit-learn
 # editable-install just the local package (no deps -> leaves Colab's torch intact),
-# which makes `aqua_anomaly` importable without any sys.path hack.
+# which makes `hydro_knight` importable without any sys.path hack.
 !pip -q install -e . --no-deps
 ```
 
@@ -54,8 +54,8 @@ print("videos found:", len(list(RAW.glob("*.mp4"))))
 ```python
 import warnings; warnings.simplefilter("ignore")
 import cv2
-from aqua_anomaly.ingest.manifest import Manifest, Label
-from aqua_anomaly.preprocess.extract_pose import extract, extract_tiled
+from hydro_knight.ingest.manifest import Manifest, Label
+from hydro_knight.preprocess.extract_pose import extract, extract_tiled
 
 def _readable(p):                      # skip missing / 0-byte / unreadable clips
     c = cv2.VideoCapture(str(p)); ok = c.isOpened() and c.get(cv2.CAP_PROP_FRAME_COUNT) > 0; c.release()
@@ -91,7 +91,7 @@ for i, r in enumerate(clips, 1):
 ### Cell 4 — build the labeled, windowed dataset
 ```python
 import cv2, numpy as np, pandas as pd
-from aqua_anomaly.features.windows import make_windows
+from hydro_knight.features.windows import make_windows
 
 WINDOW = 32
 def clip_fps(cid):
@@ -118,7 +118,7 @@ print("normal windows:", len(normal_win), "| distress windows:", len(distress_wi
 
 ### Cell 5 — train (Rung 3 TCN; Rung 2 is analogous)
 ```python
-from aqua_anomaly.models.tcn_autoencoder import train_tcn, reconstruction_error
+from hydro_knight.models.tcn_autoencoder import train_tcn, reconstruction_error
 
 # hold out 20% of NORMAL as the negative test set; train on the rest
 idx = np.random.RandomState(0).permutation(len(normal_win)); split = int(0.8 * len(normal_win))

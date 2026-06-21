@@ -20,7 +20,8 @@ Managed with [uv](https://docs.astral.sh/uv/). From the repo root:
 
 ```bash
 uv sync                 # build the env from pyproject.toml + uv.lock
-uv run python -c "import aqua_anomaly"   # editable install — no PYTHONPATH needed
+uv run python -c "import hydro_knight"   # editable install — no PYTHONPATH needed
+uv run python -m pytest  # run the unit tests
 ```
 
 `uv sync --extra spike` additionally installs MediaPipe (only needed to reproduce
@@ -68,7 +69,7 @@ distant swimmers below detectability. Running the same frame at 1280px recovered
 - **Both backends share the core risk:** trained on land-based upright humans, both degrade on prone/submerged swimmers — the next thing to validate, and a likely candidate for swim-specific fine-tuning later.
 
 Reproduce the figures: `uv run python scripts/make_pose_figure.py`
-(reads a local clip; the spike tool is [`pose_spike.py`](src/aqua_anomaly/preprocess/pose_spike.py)).
+(reads a local clip; the spike tool is [`pose_spike.py`](src/hydro_knight/preprocess/pose_spike.py)).
 
 ### Recovering distant swimmers: tiling (SAHI) + tracking
 
@@ -83,3 +84,12 @@ tracks, 11 single-frame); **ByteTrack** (model-agnostic, via `trackers`) cut
 that to 15 tracks with **0 flicker** — the stability the not-surfacing signal
 needs. BoT-SORT/OC-SORT (with re-ID) are the future option if re-identifying a
 swimmer *after* a submersion gap becomes the bottleneck.
+
+---
+
+## License
+
+[AGPL-3.0](LICENSE). The pose backend ([Ultralytics YOLO](https://github.com/ultralytics/ultralytics))
+is AGPL-3.0, and a public work that builds on AGPL code inherits that license.
+This is a non-commercial learning/portfolio project; if the AGPL dependency were
+ever swapped out (e.g. for Apache-2.0 MediaPipe), the license could be revisited.

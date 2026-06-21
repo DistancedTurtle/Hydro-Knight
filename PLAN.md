@@ -4,6 +4,23 @@
 
 A pose-based anomaly detection system for swimming pool safety. It watches pool footage, tracks individual swimmers, and flags potential drowning events. Purpose: genuine learning project and recruiting portfolio piece. Not a commercial product, but it should actually work.
 
+> **Naming note:** the repo/project is **Hydro-Knight** and the importable Python package is **`hydro_knight`** (renamed from the original `aqua_anomaly` on 2026-06-21). `import hydro_knight`.
+
+---
+
+## Current status *(updated 2026-06-21)*
+
+What is actually built in the repo (the rung markers further down describe the *design*; this is the *progress*):
+
+- **Rung 1 — done.** Pose extraction (`preprocess/extract_pose.py`), the YOLO-vs-MediaPipe spike (`pose_spike.py`), SAHI tiling (`tiled_pose.py`). Backend decision **banked: YOLO-pose @ ≥1280px** (see README for the empirical writeup).
+- **Rung 2 — done.** Pose normalization (`features/normalize.py`) + autoencoder (`models/autoencoder.py`), with `scripts/rung2_demo.py` sanity check.
+- **Rung 2.5 — done.** ByteTrack over SAHI-merged detections (`preprocess/tracking.py`); 15 stable tracks, 0 flicker on the test clip.
+- **Rung 3 — done.** TCN autoencoder over pose-sequence windows (`features/windows.py` + `models/tcn_autoencoder.py`), with `scripts/rung3_demo.py`.
+- **Annotation tooling — done** (`annotate/annotator.py`).
+- **Dataset:** 72 clips registered in `data/manifests/pool_footage.jsonl`. Distress events annotated as time windows; many occur >25 s into a clip (so full-clip extraction is required — see the Colab `max_frames` lesson in `docs/COLAB_TRAINING.md`).
+- **In flight:** batch pose extraction on Colab GPU → keypoint Parquets → first real train/eval of Rungs 2–3 on actual data.
+- **Not started:** Rung 4 (per-swimmer state machine, `detect/`), the active **partial-pose retention** fix in `normalize.py` (see Open questions).
+
 ---
 
 ## Problem framing
@@ -59,7 +76,7 @@ Decision: use joint angles + per-joint velocity as primary features. Revisit if 
 
 ## Build progression
 
-### Rung 1 — Pose extraction preprocessing *(current next step)*
+### Rung 1 — Pose extraction preprocessing *(done — see Current status)*
 Turn video into keypoint time series → per-frame keypoint Parquet files, one file per clip, one row per frame per detected person.
 
 **Pose backend: YOLO-pose primary, MediaPipe fallback — decide via a head-to-head spike.** The pose estimator is a *swappable* preprocessing choice: both backends output the same downstream representation (per-person, per-frame keypoints + confidence), so features/models/state-machine don't care which produced them. Pick empirically.
@@ -77,8 +94,8 @@ Turn video into keypoint time series → per-frame keypoint Parquet files, one f
 ### Rung 2 — Simple autoencoder on keypoint sequences
 Train to reconstruct normal swimming. High reconstruction error = anomaly. Get this working end-to-end before anything fancier. Validates the representation before adding temporal complexity.
 
-### Rung 2.5 — Lightweight tracking *(run in parallel with Rung 2, not deferred)*
-**May be subsumed by the pose backend:** if Rung 1 selects YOLO-pose, its built-in `model.track()` (ByteTrack/BoT-SORT) already provides per-swimmer IDs, so this rung could collapse into pose extraction. The notes below still apply if MediaPipe is chosen (tracking must then be bolted on separately).
+### Rung 2.5 — Lightweight tracking *(done — ByteTrack, decoupled from YOLO)*
+**Resolution:** because tracking runs over *SAHI-merged* tiled detections, YOLO's built-in `model.track()` can't be used (it only tracks its own single-pass detections). Tracking is therefore decoupled: **ByteTrack** (model-agnostic, via the `trackers` package) runs over the merged detections — 15 stable tracks, 0 flicker on the test clip vs. 53 churning tracks from a naive IoU tracker. BoT-SORT/OC-SORT with re-ID is the future option if re-identifying a swimmer *after* a submersion gap becomes the bottleneck.
 
 ByteTrack or DeepSORT for bounding-box-level identity continuity. Originally planned as Rung 4, but moved up because:
 - "Not resurfaced in N seconds" is arguably the most important signal
@@ -163,7 +180,7 @@ This is a half-day build that pays for itself within the first annotation sessio
 ## Repository structure
 
 ```
-src/aqua_anomaly/
+src/hydro_knight/
 ├── ingest/
 │   ├── manifest.py     — ClipRecord dataclass, controlled-vocabulary enums,
 │   │                     deterministic clip_id hashing, Manifest JSONL reader/writer
@@ -185,6 +202,25 @@ raw_local/              — gitignored, local video only
 docs/
 └── DATA_SOURCING.md    — manifest approach and ethics
 ```
+
+---
+
+## Repo hygiene & standards backlog *(assessed 2026-06-21)*
+
+The committed tree is clean (no video/weights/venv ever tracked — keep it that way).
+
+**Done (2026-06-21 cleanup pass):**
+- ✅ Package renamed `aqua_anomaly` → **`hydro_knight`** to match the repo (imports, README, pyproject, docs all updated).
+- ✅ `.gitignore`: added `.DS_Store` and `scratch/`; deleted loose `.DS_Store` files.
+- ✅ Pruned the unreferenced 113 MB `yolo11x-pose.pt`; kept `yolo11n` (code default) + `yolo26n` (spike). Weights stay at repo root by Ultralytics' auto-download convention (all `*.pt` are gitignored).
+- ✅ `raw_local/` is now **source video only** — scratch artifacts (viz PNGs, test parquets, `tracking.mp4`, `pose_spike_out/`) moved to gitignored `scratch/`. (`pose_landmarker.task` stays — code references `raw_local/pose_landmarker.task`.)
+- ✅ **`tests/`** added (16 tests): clip_id hashing + manifest append-dedup, normalize invariances, windowing. `[tool.pytest.ini_options]` in pyproject. Run with **`uv run python -m pytest`** (the `uv run pytest` console-script shim doesn't resolve here).
+- ✅ **LICENSE** = AGPL-3.0 (matches the Ultralytics dependency); declared in `pyproject.toml` (`license = "AGPL-3.0-only"`) + a README License section.
+- ✅ Doc/reality drift: created `data/annotations/.gitkeep` and `docs/DATA_SOURCING.md` (both were named in the repo-structure block but didn't exist).
+
+**Still TODO (deliberately deferred — to be done hands-on as a learning exercise):**
+- **CI** — `.github/workflows/ci.yml` running `uv sync` → `ruff` → `pytest` on push.
+- **Ruff** — add a `[tool.ruff]` block to `pyproject.toml` (`.ruff_cache/` is already ignored).
 
 ---
 

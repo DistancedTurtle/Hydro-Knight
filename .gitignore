@@ -1,6 +1,13 @@
 # --- Project-specific ---
+# macOS Finder metadata (noise, never useful in git)
+.DS_Store
+
 # Personal dev notes (not committed)
 DEV_WALKTHROUGH.md
+
+# Scratch space for throwaway experiment outputs (viz PNGs, test parquets,
+# spike dumps). Keeps raw_local/ as source video only.
+scratch/
 
 # Cookie files must never be committed
 *cookies*.txt
