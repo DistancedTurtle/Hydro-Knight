@@ -18,8 +18,8 @@ import sys
 import numpy as np
 import pandas as pd
 
-from aqua_anomaly.features.normalize import features_from_dataframe
-from aqua_anomaly.models.autoencoder import train_autoencoder, reconstruction_error
+from hydro_knight.features.normalize import features_from_dataframe
+from hydro_knight.models.autoencoder import train_autoencoder, reconstruction_error
 
 
 def main(parquet_path: str):

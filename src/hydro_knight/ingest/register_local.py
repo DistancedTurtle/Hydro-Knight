@@ -122,13 +122,13 @@ def register_local(
 
 # --- CLI entry point ---------------------------------------------------------
 # Example:
-#   python -m aqua_anomaly.ingest.register_local ~/Desktop/ami_pool.mp4
+#   python -m hydro_knight.ingest.register_local ~/Desktop/ami_pool.mp4
 # Edit the metadata below to match the recording.
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("usage: python -m aqua_anomaly.ingest.register_local <video_file>")
+        print("usage: python -m hydro_knight.ingest.register_local <video_file>")
         raise SystemExit(1)
 
     register_local(
